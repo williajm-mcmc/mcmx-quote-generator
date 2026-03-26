@@ -149,9 +149,12 @@ class RichTextDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         style = opt.widget.style() if opt.widget else QApplication.style()
         style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, opt.widget)
-        # Render HTML
+        # Render HTML — use a fixed Aptos 11pt font so bullets/formatting
+        # are not affected by whatever font the table widget inherits.
         doc = QTextDocument()
-        doc.setDefaultFont(option.font)
+        from PyQt6.QtGui import QFont as _QFont
+        doc.setDefaultFont(_QFont('Aptos', 11))
+        doc.setIndentWidth(20)   # match CellEditorDialog indent so bullets render correctly
         doc.setHtml(html)
         doc.setTextWidth(option.rect.width() - 8)
         painter.save()
@@ -177,7 +180,9 @@ class RichTextDelegate(QStyledItemDelegate):
         if w < 10:
             w = 200
         doc = QTextDocument()
-        doc.setDefaultFont(option.font)
+        from PyQt6.QtGui import QFont as _QFont
+        doc.setDefaultFont(_QFont('Aptos', 11))
+        doc.setIndentWidth(20)
         doc.setHtml(html)
         doc.setTextWidth(w - 8)
         h = int(doc.size().height()) + 12
@@ -202,9 +207,9 @@ class CellEditorDialog(QDialog):
     def __init__(self, html="", plain="", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Item")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(480)
         self.setMinimumHeight(200)
-        self.resize(440, 300)
+        self.resize(520, 300)
         self.setSizeGripEnabled(True)
         self.setStyleSheet(
             "QDialog { background:#ffffff; }"
@@ -230,14 +235,36 @@ class CellEditorDialog(QDialog):
 
         def _btn(text, tip):
             b = QPushButton(text); b.setToolTip(tip)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.setFixedSize(28, 24)
             return b
 
-        self._btn_bold    = _btn("B",  "Bold")
-        self._btn_bold.setStyleSheet(self._btn_bold.styleSheet() +
-                                     "QPushButton{font-weight:700;}")
-        self._btn_bullet  = _btn("•≡", "Toggle bullet")
+        _active = ("QPushButton:checked{background:#f5d0da;"
+                   "border-color:#920d2e;color:#920d2e;}")
 
-        for w in (self._btn_bold, self._btn_bullet):
+        self._btn_bold   = _btn("B",   "Bold (Ctrl+B)")
+        self._btn_bold.setStyleSheet(self._btn_bold.styleSheet() +
+                                     "QPushButton{font-weight:700;}" + _active)
+        self._btn_italic = _btn("I",   "Italic (Ctrl+I)")
+        self._btn_italic.setStyleSheet(self._btn_italic.styleSheet() +
+                                       "QPushButton{font-style:italic;}" + _active)
+        self._btn_bullet  = _btn("•≡", "Toggle bullet list")
+
+        _sep1 = QFrame(); _sep1.setFrameShape(QFrame.Shape.VLine)
+        _sep1.setStyleSheet("color:#dde1e7;")
+        _sep2 = QFrame(); _sep2.setFrameShape(QFrame.Shape.VLine)
+        _sep2.setStyleSheet("color:#dde1e7;")
+
+        self._btn_align_l = _btn("⬤≡",  "Align left")
+        self._btn_align_c = _btn("≡⬤≡", "Align center")
+        self._btn_align_r = _btn("≡⬤",  "Align right")
+        self._btn_align_c.setFixedSize(32, 24)
+
+        for w in (self._btn_bold, self._btn_italic,
+                  _sep1,
+                  self._btn_bullet,
+                  _sep2,
+                  self._btn_align_l, self._btn_align_c, self._btn_align_r):
             tb_row.addWidget(w)
         tb_row.addStretch()
         layout.addWidget(tb)
@@ -264,26 +291,36 @@ class CellEditorDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
-        # Default character format: Aptos 11pt black
+        # Default character format: Aptos 11pt black, not bold
         _def = QTextCharFormat()
-        _def.setFontFamily('Aptos Narrow')
+        _def.setFontFamily('Aptos')
         _def.setFontPointSize(11.0)
+        _def.setFontWeight(QFont.Weight.Normal)
         _def.setForeground(QColor(0x1a, 0x1a, 0x2e))
-        self.editor.setCurrentCharFormat(_def)
-        self.editor.document().setDefaultFont(QFont('Aptos Narrow', 11))
+        _df = QFont('Aptos', 11)
+        _df.setWeight(QFont.Weight.Normal)
+        self.editor.document().setDefaultFont(_df)
         # Load content
         if html:
             self.editor.setHtml(html)
         else:
             self.editor.setPlainText(plain)
+        # setCurrentCharFormat must come AFTER loading — setPlainText/setHtml
+        # resets the cursor, discarding any format set before loading.
+        self.editor.setCurrentCharFormat(_def)
 
         # Wire toolbar
         self._btn_bold.setCheckable(True)
-        _active = ("QPushButton:checked{background:#f5d0da;"
-                   "border-color:#920d2e;color:#920d2e;}")
-        self._btn_bold.setStyleSheet(self._btn_bold.styleSheet() + _active)
+        self._btn_italic.setCheckable(True)
         self._btn_bold.clicked.connect(self._toggle_bold)
+        self._btn_italic.clicked.connect(self._toggle_italic)
         self._btn_bullet.clicked.connect(self._toggle_bullet)
+        self._btn_align_l.clicked.connect(
+            lambda: self._set_alignment(Qt.AlignmentFlag.AlignLeft))
+        self._btn_align_c.clicked.connect(
+            lambda: self._set_alignment(Qt.AlignmentFlag.AlignHCenter))
+        self._btn_align_r.clicked.connect(
+            lambda: self._set_alignment(Qt.AlignmentFlag.AlignRight))
         self.editor.currentCharFormatChanged.connect(self._sync_fmt_btns)
 
     def _on_contents_changed(self):
@@ -295,6 +332,7 @@ class CellEditorDialog(QDialog):
 
     def _sync_fmt_btns(self, fmt):
         self._btn_bold.setChecked(fmt.fontWeight() == QFont.Weight.Bold)
+        self._btn_italic.setChecked(fmt.fontItalic())
 
     def _toggle_bold(self):
         fmt = QTextCharFormat()
@@ -305,32 +343,33 @@ class CellEditorDialog(QDialog):
         c.mergeCharFormat(fmt)
         self.editor.setTextCursor(c)
 
+    def _toggle_italic(self):
+        fmt = QTextCharFormat()
+        c = self.editor.textCursor()
+        fmt.setFontItalic(not c.charFormat().fontItalic())
+        c.mergeCharFormat(fmt)
+        self.editor.setTextCursor(c)
+
+    def _set_alignment(self, alignment):
+        self.editor.setAlignment(alignment)
+
     def _toggle_bullet(self):
-        # Ensure the editor has focus so textCursor() reflects the user's
-        # last caret position rather than a stale/default position.
-        self.editor.setFocus()
         cursor = self.editor.textCursor()
         lst = cursor.currentList()
-        cursor.beginEditBlock()
-        try:
-            if lst:
-                # Remove block from list, then clear list-related block format.
-                lst.remove(cursor.block())
-                bf = QTextBlockFormat()
-                bf.setIndent(0)
-                cursor.setBlockFormat(bf)
-            else:
-                # Create a level-1 bullet.  Do NOT call setBlockFormat after
-                # createList — overwriting the block format in PyQt6 can silently
-                # detach the block from the newly-created list.
-                fmt = QTextListFormat()
-                fmt.setStyle(QTextListFormat.Style.ListDisc)
-                fmt.setIndent(1)
-                cursor.createList(fmt)
-        finally:
-            cursor.endEditBlock()
+        if lst:
+            # Detach from list then clear block indent
+            block = cursor.block()
+            lst.remove(block)
+            bf = QTextBlockFormat()
+            bf.setIndent(0)
+            cursor.setBlockFormat(bf)
+        else:
+            fmt = QTextListFormat()
+            fmt.setStyle(QTextListFormat.Style.ListDisc)
+            fmt.setIndent(1)
+            cursor.createList(fmt)
         self.editor.setTextCursor(cursor)
-        self.editor.update()
+        self.editor.setFocus()
 
     def _indent(self):
         cursor = self.editor.textCursor()
@@ -349,7 +388,7 @@ class CellEditorDialog(QDialog):
 
 class _CellTextEdit(QTextEdit):
     """QTextEdit with bullet/tab keyboard shortcuts for CellEditorDialog."""
-    _PASTE_FAMILY = 'Aptos Narrow'
+    _PASTE_FAMILY = 'Aptos'
     _PASTE_SIZE   = 11.0
     _PASTE_COLOR  = (0x1a, 0x1a, 0x2e)
 
@@ -976,25 +1015,13 @@ def _parse_html_table_to_qt(html: str, cursor, editor):
 
 
 def _safe_indent(cursor, widget):
-    """Indent only the current block — removes it from its list and
-    creates a new sub-list at indent+1, leaving all other blocks alone."""
+    """Indent the current list block by one level without creating a blank line."""
     lst = cursor.currentList()
     if not lst:
         return
-    cursor.beginEditBlock()
-    try:
-        new_fmt = QTextListFormat(lst.format())
-        new_fmt.setIndent(lst.format().indent() + 1)
-        block = cursor.block()
-        block_pos = block.position()
-        lst.remove(block)                          # detach from parent list
-        c2 = QTextCursor(cursor.document())
-        c2.setPosition(block_pos)                  # re-position on same block
-        c2.createList(new_fmt)                     # create new sub-list for it
-    except Exception:
-        pass
-    finally:
-        cursor.endEditBlock()
+    new_fmt = QTextListFormat(lst.format())
+    new_fmt.setIndent(lst.format().indent() + 1)
+    cursor.createList(new_fmt)
 
 
 def _safe_outdent(cursor, lst, fmt, widget):
@@ -1031,7 +1058,7 @@ class _RichTextEditInternal(QTextEdit):
     """
 
     # ── format constants applied to all pasted content ───────────────────
-    _PASTE_FAMILY = 'Aptos Narrow'
+    _PASTE_FAMILY = 'Aptos'
     _PASTE_SIZE   = 11.0
     _PASTE_COLOR  = (0x1a, 0x1a, 0x2e)   # near-black
 
@@ -1146,7 +1173,7 @@ class _RichTextEditInternal(QTextEdit):
                 super().keyPressEvent(event)
                 # Build body format
                 body_fmt = QTextCharFormat()
-                body_fmt.setFontFamily('Aptos Narrow')
+                body_fmt.setFontFamily('Aptos')
                 body_fmt.setFontPointSize(11.0)
                 body_fmt.setFontWeight(QFont.Weight.Normal)
                 body_fmt.setForeground(QColor(0x1a, 0x1a, 0x2e))
@@ -1330,17 +1357,17 @@ class RichTextEditor(QWidget):
         self.editor._rich_editor_ref = self   # back-reference for btn state
         # Default character format: Aptos 11pt black
         _def_fmt = QTextCharFormat()
-        _def_fmt.setFontFamily('Aptos Narrow')
+        _def_fmt.setFontFamily('Aptos')
         _def_fmt.setFontPointSize(11.0)
         _def_fmt.setForeground(QColor(0x1a, 0x1a, 0x2e))
         self.editor.setCurrentCharFormat(_def_fmt)
         self.editor.document().setDefaultFont(
-            QFont('Aptos Narrow', 11))
+            QFont('Aptos', 11))
         # Match bullet visual indent to Word's convention (~0.25 in per level).
         self.editor.document().setIndentWidth(20)
         self.editor.setStyleSheet(
             "QTextEdit { border:1px solid #dde1e7; border-radius:0 0 4px 4px; "
-            "padding:6px; font-family:'Aptos Narrow'; font-size:12px; "
+            "padding:6px; font-family:'Aptos'; font-size:12px; "
             "color:#1a1a2e; background:#fafbfd; }"
             "QTextEdit:focus { border-color:#6a8fd8; background:#ffffff; }")
         self.editor.setMinimumHeight(120)
@@ -1379,14 +1406,16 @@ class RichTextEditor(QWidget):
 
     def _toggle_italic(self):
         fmt = QTextCharFormat()
-        fmt.setFontItalic(not self.editor.textCursor().charFormat().fontItalic())
-        self.editor.textCursor().mergeCharFormat(fmt)
+        c = self.editor.textCursor()
+        fmt.setFontItalic(not c.charFormat().fontItalic())
+        c.mergeCharFormat(fmt)
+        self.editor.setTextCursor(c)
 
     _HDR_FAMILY  = 'Aptos'
     _HDR_SIZE    = 16
     _HDR_COLOR   = (0x9E, 0x1B, 0x32)
     _BODY_COLOR  = (0x1a, 0x1a, 0x2e)
-    _BODY_FAMILY = 'Aptos Narrow'
+    _BODY_FAMILY = 'Aptos'
     _BODY_SIZE   = 11.0
 
     def _toggle_header(self):
@@ -2207,8 +2236,8 @@ class TableSection(CollapsibleCard):
                 self.table.setItem(row, self._COL_PART, item)
             self.table.blockSignals(True)
             item.setText(new_plain)
-            item.setData(Qt.ItemDataRole.UserRole, new_html)
             self.table.blockSignals(False)
+            item.setData(Qt.ItemDataRole.UserRole, new_html)  # outside blockSignals so dataChanged fires → delegate repaints
             # Resize row to fit rich content; sync the Hours? container too
             from PyQt6.QtWidgets import QStyleOptionViewItem
             delegate = self.table.itemDelegateForColumn(self._COL_PART)
@@ -2353,7 +2382,10 @@ class TableSection(CollapsibleCard):
         qty_item = self.table.item(row, self._COL_QTY)
         is_hours = row in getattr(self, '_hours_rows', set())
         try:
-            qty = float(qty_item.text().strip()) if qty_item else 0.0
+            raw = qty_item.text().strip() if qty_item else ''
+            # Guard against a saved '(Hours)' suffix surviving in the cell text.
+            raw = raw.replace('(Hours)', '').strip()
+            qty = float(raw) if raw else 0.0
         except Exception:
             qty = 0.0
         return qty, (' (Hours)' if is_hours else '')
@@ -2647,16 +2679,31 @@ class DynamicFormWidget:
                 for r_i, row in enumerate(rows_data):
                     if r_i >= tbl.rowCount():
                         widget.add_row()
+                    is_hours_row = False
                     for c_i, val in enumerate(row[:5]):
                         col = [widget._COL_PART, widget._COL_QTY,
                                widget._COL_MKUP, widget._COL_LINE_TOT,
                                widget._COL_TOTAL][c_i]
                         item = tbl.item(r_i, col)
                         if item:
-                            item.setText(str(val))
+                            if c_i == 1:  # qty — strip saved '(Hours)' suffix
+                                val_str = str(val)
+                                if '(Hours)' in val_str:
+                                    is_hours_row = True
+                                    val_str = val_str.replace('(Hours)', '').strip()
+                                item.setText(val_str)
+                            else:
+                                item.setText(str(val))
                     if len(row) > 5:
                         item = tbl.item(r_i, widget._COL_PART)
                         if item:
                             item.setData(Qt.ItemDataRole.UserRole, row[5])
+                    # Restore Hours? checkbox without triggering recalculation;
+                    # _refresh_all_totals() below will use the correct state.
+                    if is_hours_row and r_i < len(widget._hours_checkboxes):
+                        widget._hours_checkboxes[r_i].blockSignals(True)
+                        widget._hours_checkboxes[r_i].setChecked(True)
+                        widget._hours_checkboxes[r_i].blockSignals(False)
+                        widget._hours_rows.add(r_i)
                 tbl.blockSignals(False)
                 widget._refresh_all_totals()

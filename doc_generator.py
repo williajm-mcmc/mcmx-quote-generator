@@ -13,7 +13,7 @@ _HERE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 
 BOM_HEADERS = ["Part Number", "Qty", "Price Each", "Total Price"]
 
-def _style_cell(cell, text, bold=False, font_name="Aptos Narrow", font_size=11,
+def _style_cell(cell, text, bold=False, font_name="Aptos", font_size=11,
                 align=WD_ALIGN_PARAGRAPH.LEFT, color=None):
     cell.text = ""
     run = cell.paragraphs[0].add_run(str(text))
@@ -90,15 +90,13 @@ def _build_bom_table(doc, rows):
         cells = table.rows[r_i + 1].cells
         part      = row[0] if len(row) > 0 else ""
         qty       = row[1] if len(row) > 1 else ""
-        cost      = row[2] if len(row) > 2 else ""
-        mkup      = row[3] if len(row) > 3 else ""
-        total     = row[4] if len(row) > 4 else ""
+        sale_unit = row[2] if len(row) > 2 else ""  # sale price per unit
         part_html = row[5] if len(row) > 5 else ""
 
         # Strip $ and commas before float conversion
         def _clean(s): return s.replace('$','').replace(',','').strip() if s else ''
         try:
-            unit_price = float(_clean(mkup)) if _clean(mkup) else float(_clean(cost))
+            unit_price = float(_clean(sale_unit)) if _clean(sale_unit) else 0.0
         except (ValueError, AttributeError):
             unit_price = 0.0
         try:
@@ -111,24 +109,61 @@ def _build_bom_table(doc, rows):
         line_total  = qty_f * unit_price
         grand_total += line_total
 
-        # Use rich HTML if available (bullets, bold etc from cell editor)
+        # Use rich HTML if available (bullets, bold etc from cell editor).
+        # Render into a fresh temporary Document first (same approach as
+        # paragraph sections) so all python-docx APIs work on a real Document
+        # object, then deep-copy the resulting paragraph XML into the cell.
         if part_html and '<' in part_html:
             try:
+                import copy as _copy
+                from docx import Document as _TmpDoc
                 from docx.oxml.ns import qn as _qnc
-                # Remove ALL existing paragraphs from the cell
+
+                tmp = _TmpDoc()
+                _html_to_docx_paragraphs(tmp, part_html)
+
+                # Copy bullet numbering definitions into the rendered doc so
+                # any numId references inside the cell resolve correctly.
+                try:
+                    tmp_np = tmp.part.numbering_part._element
+                    try:
+                        ren_np = doc.part.numbering_part._element
+                    except Exception:
+                        from docx.parts.numbering import NumberingPart as _NP
+                        _ren_part = _NP.new()
+                        doc.part._add_relationship(
+                            'http://schemas.openxmlformats.org/officeDocument/'
+                            '2006/relationships/numbering', _ren_part)
+                        ren_np = _ren_part._element
+                    _ex_abs = {x.get(_qnc('w:abstractNumId'))
+                               for x in ren_np.findall(_qnc('w:abstractNum'))}
+                    _ex_num = {x.get(_qnc('w:numId'))
+                               for x in ren_np.findall(_qnc('w:num'))}
+                    for _ae in tmp_np.findall(_qnc('w:abstractNum')):
+                        if _ae.get(_qnc('w:abstractNumId')) not in _ex_abs:
+                            ren_np.append(_copy.deepcopy(_ae))
+                    for _ne in tmp_np.findall(_qnc('w:num')):
+                        if _ne.get(_qnc('w:numId')) not in _ex_num:
+                            ren_np.append(_copy.deepcopy(_ne))
+                except Exception:
+                    pass
+
+                # Swap cell content: remove old paragraphs, inject new ones.
                 for p_el in list(cells[0]._tc.findall(_qnc('w:p'))):
                     cells[0]._tc.remove(p_el)
-                # Pass doc so numbering lookups work inside the cell
-                _html_to_docx_paragraphs(cells[0], part_html, _doc_obj=doc)
-                # If cell ended up empty (all paragraphs removed), add a blank one
+                for elem in list(tmp.element.body):
+                    if elem.tag.endswith('}sectPr'):
+                        continue
+                    cells[0]._tc.append(_copy.deepcopy(elem))
+                # Ensure cell always has at least one paragraph (Word requires it)
                 if not cells[0]._tc.findall(_qnc('w:p')):
                     from docx.oxml import OxmlElement as _Ep
                     cells[0]._tc.append(_Ep('w:p'))
             except Exception:
                 import traceback; traceback.print_exc()
-                _style_cell(cells[0], part, bold=True, font_size=11)
+                _style_cell(cells[0], part, bold=False, font_size=11)
         else:
-            _style_cell(cells[0], part, bold=True, font_size=11)
+            _style_cell(cells[0], part, bold=False, font_size=11)
         _style_cell(cells[1], qty,  bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
         _style_cell(cells[2], f"${int(unit_price):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
         _style_cell(cells[3], f"${int(line_total):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
@@ -137,9 +172,9 @@ def _build_bom_table(doc, rows):
     # alignment afterwards so _set_table_full_width can't clobber it.
     _set_table_full_width(table)
     total_row = table.rows[-1].cells
-    _style_cell(total_row[0], "", font_size=11)
-    _style_cell(total_row[1], "", font_size=11)
-    _style_cell(total_row[2], "Total Price:", bold=True, font_size=11,
+    # Merge the first three cells so only "Total Price:" + value remain
+    merged = total_row[0].merge(total_row[2])
+    _style_cell(merged, "Total Price:", bold=True, font_size=11,
                 color=TOTAL_COLOR, align=WD_ALIGN_PARAGRAPH.RIGHT)
     _style_cell(total_row[3], f"${int(grand_total):,}", bold=True, font_size=11,
                 color=TOTAL_COLOR, align=WD_ALIGN_PARAGRAPH.RIGHT)
@@ -349,7 +384,7 @@ def _html_to_docx_paragraphs_inner(doc, html: str):
             run = p.add_run(text)
             run.bold = b; run.italic = i
             if size:   run.font.size = Pt(size)
-            run.font.name = family or "Aptos Narrow"
+            run.font.name = family or "Aptos"
             if color:
                 try:
                     run.font.color.rgb = _RGB(
@@ -576,11 +611,11 @@ def _html_to_docx_paragraphs_inner(doc, html: str):
                                 else f"{total_val:,.2f}")
                     run = p.add_run(text_val)
                     run.bold = True
-                    run.font.name = "Aptos Narrow"
+                    run.font.name = "Aptos"
                 elif is_total_row and c_i == 0:
                     run = p.add_run('Total')
                     run.bold = True
-                    run.font.name = "Aptos Narrow"
+                    run.font.name = "Aptos"
                     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 else:
                     for text, bold, italic, size, family, color in _runs(cn):
@@ -588,7 +623,7 @@ def _html_to_docx_paragraphs_inner(doc, html: str):
                         run.bold   = bold or is_header_row
                         run.italic = italic
                         if size:   run.font.size = _Pt(size)
-                        run.font.name = family or "Aptos Narrow"
+                        run.font.name = family or "Aptos"
                         if color:
                             try:
                                 run.font.color.rgb = _TRGB(
@@ -641,7 +676,10 @@ def _html_to_docx_paragraphs_inner(doc, html: str):
             # they would otherwise produce a spurious blank paragraph in Word.
             # We check _runs() so that inline formatting nodes inside the <p>
             # are also considered — only truly contentless nodes are dropped.
-            _p_text   = ''.join(t for t, *_ in _runs(node)).strip()
+            # Strip ASCII whitespace AND non-breaking space (\xa0) — Qt emits
+            # &#160; in spacer paragraphs between list levels, which Python's
+            # plain .strip() does not remove.
+            _p_text   = ''.join(t for t, *_ in _runs(node)).strip(' \t\n\r\xa0')
             _p_struct = any(c.tag in ('table', 'ul', 'ol', 'img') for c in node.children)
             if not _p_text and not _p_struct:
                 return
@@ -653,7 +691,7 @@ def _html_to_docx_paragraphs_inner(doc, html: str):
                     if node.text and node.text.strip():
                         p = doc.add_paragraph()
                         r = p.add_run(node.text)
-                        r.font.name = "Aptos Narrow"
+                        r.font.name = "Aptos"
                     _build_table(doc, child)
                     return
 
@@ -884,24 +922,54 @@ def _extract_subheaders(html):
     Qt serialises it as lowercase #9e1b32 in span style attributes.
     """
     import re
+    from html import unescape
+    if not html:
+        return []
     results = []
-    pattern = re.compile(
-        r'<span[^>]+color\s*:\s*#?9[Ee]1[Bb]32[^>]*>([^<]+)</span>', re.I)
-    for m in pattern.finditer(html or ""):
-        txt = m.group(1).strip()
-        if txt:
-            results.append(txt)
+    # Match colour in hex or rgb() form to handle any Qt serialisation variant.
+    _COLOR_RE = re.compile(
+        r'color\s*:\s*(?:#?9[Ee]1[Bb]32|rgb\s*\(\s*158\s*,\s*27\s*,\s*50\s*\))',
+        re.I)
+    # Use re.S so .*? spans newlines; capture span attributes separately from
+    # content so colour is only checked against the opening tag's style string.
+    span_re = re.compile(r'<span(\b[^>]*)>(.*?)</span>', re.I | re.S)
+    for m in span_re.finditer(html):
+        attrs, content = m.group(1), m.group(2)
+        if not _COLOR_RE.search(attrs):
+            continue
+        # Strip any inner HTML tags to get plain text, then unescape entities.
+        text = unescape(re.sub(r'<[^>]+>', '', content)).strip()
+        if text:
+            results.append(text)
     return results
+
+
+def _stamp_bookmark(p_el, bm_name, bm_id, qn):
+    """Insert a bookmark wrapping all content in a paragraph element."""
+    from docx.oxml import OxmlElement as _E
+    bm_s = _E('w:bookmarkStart')
+    bm_s.set(qn('w:id'), str(bm_id))
+    bm_s.set(qn('w:name'), bm_name)
+    bm_e = _E('w:bookmarkEnd')
+    bm_e.set(qn('w:id'), str(bm_id))
+    first_r = p_el.find(qn('w:r'))
+    if first_r is not None:
+        first_r.addprevious(bm_s)
+    else:
+        p_el.insert(0, bm_s)
+    p_el.append(bm_e)
 
 
 def _inject_section_numbers(doc, sections):
     """Prepend 'N.  ' to paragraphs matching each section header.
 
-    - Paragraph sections: exact text match; number run is inserted before the
-      first existing run so original formatting is preserved.
+    - Paragraph sections: normalised-whitespace exact match so minor spacing
+      differences between the form and the rendered template don't break matching.
     - Table sections: fuzzy contains-match; ALL existing runs are cleared and
-      the paragraph is rebuilt as 'N.  Bill of Material', removing any project
-      name or other template text the docxtpl render may have placed there.
+      the paragraph is rebuilt as 'N.  Bill of Material'.
+
+    Returns a dict mapping sec_num (str) → bookmark_name so the caller can
+    build PAGEREF-based TOC page numbers.
     """
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
@@ -928,32 +996,38 @@ def _inject_section_numbers(doc, sections):
         r.append(t)
         return r
 
+    _norm = lambda s: ' '.join(s.split()).lower()
+    bookmarks = {}   # sec_num (str) -> bookmark_name (str)
+
     for sec in sections:
         hdr      = sec.get("header", "").strip()
-        num      = sec.get("section_number", "")
+        num      = str(sec.get("section_number", ""))
         is_table = sec.get("type") == "table"
         if not hdr or not num:
             continue
         for para in doc.paragraphs:
             text = para.text.strip()
-            # Table sections : fuzzy contains-match (strips project-name prefix)
-            # Paragraph sections: case-insensitive exact match — handles template
-            # capitalisation differences (e.g. "Terms & Conditions" vs exact)
-            matched = (hdr.lower() in text.lower()) if is_table \
-                      else (text.lower() == hdr.lower())
+            # Normalised-whitespace match so minor spacing differences between
+            # the form and the rendered template don't break matching.
+            matched = (_norm(hdr) in _norm(text)) if is_table \
+                      else (_norm(text) == _norm(hdr))
             if not matched or not para.runs:
                 continue
             if is_table:
-                # Remove every existing run then rebuild clean
                 p_el = para._p
                 for r_el in list(p_el.findall(qn('w:r'))):
                     p_el.remove(r_el)
                 p_el.append(_hdr_run_xml(f"{num}.  "))
                 p_el.append(_hdr_run_xml(hdr))
             else:
-                # Paragraph section: just insert number run before the first run
                 para.runs[0]._r.addprevious(_hdr_run_xml(f"{num}.  "))
+            # Add bookmark so the TOC can use PAGEREF for accurate page numbers
+            bm_name = f'_tocs{num}'
+            _stamp_bookmark(para._p, bm_name, 1000 + len(bookmarks), qn)
+            bookmarks[num] = bm_name
             break
+
+    return bookmarks
 
 
 def _inject_subheader_numbers(doc, sections=None, subheader_counts=None):
@@ -1079,10 +1153,10 @@ def _inject_subheader_numbers(doc, sections=None, subheader_counts=None):
 
 def _insert_toc(doc, entries):
     """
-    Insert a Word TOC field immediately after the first paragraph whose text is
-    'TABLE OF CONTENTS' (case-insensitive).  The field uses built-in TOC1/TOC2
-    styles with dotted right-aligned tab leaders so it renders correctly on
-    first open and can be refreshed with Update Fields in Word.
+    Insert a Word { TOC \\u \\h \\z } field after the TABLE OF CONTENTS anchor.
+    Word rebuilds all entries and page numbers from outline-level paragraphs
+    (set by _set_header_outline_levels / _detect_and_stamp_static_headers)
+    when the document is opened with updateFields=1 in settings.xml.
     """
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
@@ -1098,138 +1172,70 @@ def _insert_toc(doc, entries):
     if toc_para is None:
         return
 
-    if not entries:
-        return
-
     anchor = toc_para._element
 
-    def _mk_r_font(bold=False, sz_half=22):
-        rPr = OxmlElement('w:rPr')
-        fonts = OxmlElement('w:rFonts')
-        fonts.set(qn('w:ascii'), 'Aptos Narrow')
-        fonts.set(qn('w:hAnsi'), 'Aptos Narrow')
-        rPr.append(fonts)
-        sz = OxmlElement('w:sz');   sz.set(qn('w:val'), str(sz_half))
-        szCs = OxmlElement('w:szCs'); szCs.set(qn('w:val'), str(sz_half))
-        rPr.append(sz); rPr.append(szCs)
-        if bold:
-            rPr.append(OxmlElement('w:b'))
-        return rPr
+    # Remove any existing TOC placeholder paragraphs (TOC1/TOC2/TOCHeading style)
+    _W_NS_STR = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    _TOC_STYLES_RM = {'TOC1', 'TOC2', 'TOCHeading', 'toc 1', 'toc 2', 'toc heading'}
+    _sib = anchor.getnext()
+    _rm = []
+    while _sib is not None:
+        _tag = _sib.tag
+        if _tag == f'{{{_W_NS_STR}}}p':
+            _pPr = _sib.find(f'{{{_W_NS_STR}}}pPr')
+            _pSt = _pPr.find(f'{{{_W_NS_STR}}}pStyle') if _pPr is not None else None
+            _sv  = (_pSt.get(f'{{{_W_NS_STR}}}val', '') if _pSt is not None else '').lower()
+            if _sv in _TOC_STYLES_RM:
+                _rm.append(_sib)
+                _sib = _sib.getnext()
+                continue
+        break
+    for _e in _rm:
+        _e.getparent().remove(_e)
 
-    def _toc_entry_p(level, label, text, add_field_end=False):
-        """Build a <w:p> for one TOC entry in TOC1 or TOC2 style."""
-        p = OxmlElement('w:p')
-        pPr = OxmlElement('w:pPr')
+    # Build a single paragraph containing the { TOC \u \h \z } field.
+    # \u  = use paragraph outline level (set on section headers by _set_header_outline_levels)
+    # \h  = make entries hyperlinks
+    # \z  = hide tab/page-number in web layout
+    # dirty="true" forces Word to regenerate on open (works even in Protected View).
+    p = OxmlElement('w:p')
 
-        # Style
-        pStyle = OxmlElement('w:pStyle')
-        pStyle.set(qn('w:val'), 'TOC1' if level == 1 else 'TOC2')
-        pPr.append(pStyle)
-
-        # Right-aligned dotted tab stop at ~6.3 in (9072 twips)
-        tabs = OxmlElement('w:tabs')
-        tab = OxmlElement('w:tab')
-        tab.set(qn('w:val'), 'right')
-        tab.set(qn('w:leader'), 'dot')
-        tab.set(qn('w:pos'), '9072')
-        tabs.append(tab)
-        pPr.append(tabs)
-
-        # Extra indent for level-2 entries
-        if level > 1:
-            ind = OxmlElement('w:ind')
-            ind.set(qn('w:left'), '360')
-            pPr.append(ind)
-
-        p.append(pPr)
-
-        is_l1 = (level == 1)
-
-        # Label + text run
-        r_txt = OxmlElement('w:r')
-        r_txt.append(_mk_r_font(bold=is_l1, sz_half=22 if is_l1 else 20))
-        t = OxmlElement('w:t')
-        t.set(f'{{{_XML}}}space', 'preserve')
-        t.text = f"{label}.  {text}"
-        r_txt.append(t)
-        p.append(r_txt)
-
-        # Tab run (goes to dotted leader → page-number position)
-        r_tab = OxmlElement('w:r')
-        r_tab.append(_mk_r_font(bold=False, sz_half=22 if is_l1 else 20))
-        t_tab = OxmlElement('w:t')
-        t_tab.set(f'{{{_XML}}}space', 'preserve')
-        t_tab.text = '\t'
-        r_tab.append(t_tab)
-        p.append(r_tab)
-
-        if add_field_end:
-            r_end = OxmlElement('w:r')
-            fc_end = OxmlElement('w:fldChar')
-            fc_end.set(qn('w:fldCharType'), 'end')
-            r_end.append(fc_end)
-            p.append(r_end)
-
-        return p
-
-    # ── Build field-begin paragraph ──────────────────────────────────────────
-    p_instr = OxmlElement('w:p')
-    pPr_instr = OxmlElement('w:pPr')
-    pStyle_instr = OxmlElement('w:pStyle')
-    pStyle_instr.set(qn('w:val'), 'TOCHeading')
-    pPr_instr.append(pStyle_instr)
-    p_instr.append(pPr_instr)
-
-    r_fc_begin = OxmlElement('w:r')
-    fc_begin = OxmlElement('w:fldChar')
-    fc_begin.set(qn('w:fldCharType'), 'begin')
-    fc_begin.set(qn('w:dirty'), 'true')
-    r_fc_begin.append(fc_begin)
-    p_instr.append(r_fc_begin)
+    r_begin = OxmlElement('w:r')
+    fc_b = OxmlElement('w:fldChar')
+    fc_b.set(qn('w:fldCharType'), 'begin')
+    fc_b.set(qn('w:dirty'), 'true')
+    r_begin.append(fc_b)
+    p.append(r_begin)
 
     r_instr = OxmlElement('w:r')
-    instr_txt = OxmlElement('w:instrText')
-    instr_txt.set(f'{{{_XML}}}space', 'preserve')
-    instr_txt.text = ' TOC \\h \\z \\u '
-    r_instr.append(instr_txt)
-    p_instr.append(r_instr)
+    it = OxmlElement('w:instrText')
+    it.set(f'{{{_XML}}}space', 'preserve')
+    it.text = ' TOC \\u \\h \\z '
+    r_instr.append(it)
+    p.append(r_instr)
 
     r_sep = OxmlElement('w:r')
-    fc_sep = OxmlElement('w:fldChar')
-    fc_sep.set(qn('w:fldCharType'), 'separate')
-    r_sep.append(fc_sep)
-    p_instr.append(r_sep)
+    fc_s = OxmlElement('w:fldChar')
+    fc_s.set(qn('w:fldCharType'), 'separate')
+    r_sep.append(fc_s)
+    p.append(r_sep)
 
-    # Prevent the "Table of Contents" anchor paragraph from appearing in the
-    # TOC itself.  _set_header_outline_levels may have given it outlineLvl=0
-    # if it is styled dark-red 16pt; override that now with outlineLvl=9
-    # ("body text" — excluded from all TOC scans).
-    _anchor_pPr = toc_para._p.get_or_add_pPr()
-    for _old in _anchor_pPr.findall(qn('w:outlineLvl')):
-        _anchor_pPr.remove(_old)
-    _anchor_ol = OxmlElement('w:outlineLvl')
-    _anchor_ol.set(qn('w:val'), '9')
-    _anchor_pPr.append(_anchor_ol)
+    r_end = OxmlElement('w:r')
+    fc_e = OxmlElement('w:fldChar')
+    fc_e.set(qn('w:fldCharType'), 'end')
+    r_end.append(fc_e)
+    p.append(r_end)
 
-    # ── Insert all paragraphs after anchor (preserves order via prev pointer) ─
-    prev = anchor
-    prev.addnext(p_instr)
-    prev = p_instr
+    anchor.addnext(p)
 
-    for idx, (level, label, text) in enumerate(entries):
-        is_last = (idx == len(entries) - 1)
-        entry_p = _toc_entry_p(level, label, text, add_field_end=is_last)
-        prev.addnext(entry_p)
-        prev = entry_p
-
-    # Page break after the last TOC entry
+    # Page break after the TOC field
     p_break = OxmlElement('w:p')
     r_break = OxmlElement('w:r')
     br = OxmlElement('w:br')
     br.set(qn('w:type'), 'page')
     r_break.append(br)
     p_break.append(r_break)
-    prev.addnext(p_break)
+    p.addnext(p_break)
 
 
 def _set_header_outline_levels(doc):
@@ -1393,7 +1399,9 @@ def _detect_and_stamp_static_headers(doc, sections):
         ol.set(qn('w:val'), '0')
         pPr.append(ol)
 
-        extra_entries.append((1, label, hdr_text))
+        bm_name = f'_tocss{label}'
+        _stamp_bookmark(para._p, bm_name, 2000 + len(extra_entries), qn)
+        extra_entries.append((1, label, hdr_text, bm_name))
         next_sec += 1
 
     return extra_entries
@@ -1481,17 +1489,51 @@ def generate_doc(form_data, template_path=None, output_path=None):
             _tb.print_exc()
 
     try:
-        _inject_section_numbers(rendered, sections)
+        section_bm_map = _inject_section_numbers(rendered, sections)
         _inject_subheader_numbers(rendered, sections=sections,
                                   subheader_counts=subheader_counts)
         # Stamp static template sections (T&C, Copyright, etc.) that live
         # in the Word template but are not part of form_data["sections"].
         static_entries = _detect_and_stamp_static_headers(rendered, sections)
         toc_entries.extend(static_entries)
+        # Upgrade toc_entries to 4-tuples (level, label, text, bookmark_name)
+        # so _insert_toc can use PAGEREF fields for accurate page numbers.
+        toc_entries = [
+            (e[0], e[1], e[2], e[3] if len(e) > 3
+             else (section_bm_map.get(e[1]) if e[0] == 1 else None))
+            for e in toc_entries
+        ]
         _set_header_outline_levels(rendered)
         _insert_toc(rendered, toc_entries)
     except Exception:
         import traceback as _tb2; _tb2.print_exc()
 
     rendered.save(output_path)
+
+    # Post-save: force <w:updateFields w:val="1"/> into word/settings.xml so Word
+    # recalculates the TOC page numbers on first open regardless of prior state.
+    import zipfile as _zf, os as _os2, re as _re2
+    _tmp_path = output_path + '.__settingstmp'
+    try:
+        with _zf.ZipFile(output_path, 'r') as _zin:
+            with _zf.ZipFile(_tmp_path, 'w', _zf.ZIP_DEFLATED) as _zout:
+                for _item in _zin.infolist():
+                    _data = _zin.read(_item.filename)
+                    if _item.filename == 'word/settings.xml':
+                        _s = _data.decode('utf-8')
+                        # Remove any existing updateFields element (may be val="0")
+                        _s = _re2.sub(r'<w:updateFields[^/]*/>', '', _s)
+                        # Insert with val="1" before closing tag
+                        _s = _re2.sub(
+                            r'</w:settings>',
+                            '<w:updateFields w:val="1"/></w:settings>',
+                            _s, count=1)
+                        _data = _s.encode('utf-8')
+                    _zout.writestr(_item, _data)
+        _os2.replace(_tmp_path, output_path)
+    except Exception:
+        import traceback as _tb3; _tb3.print_exc()
+        try: _os2.remove(_tmp_path)
+        except Exception: pass
+
     return output_path

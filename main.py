@@ -28,12 +28,12 @@ APP_STYLE = """
     QMainWindow, QWidget#centralwidget {
         background: #ffffff;
     }
-    QLabel { color: #1a0509; font-family: 'Aptos Narrow'; font-size: 12px; }
+    QLabel { color: #1a0509; font-family: 'Aptos'; font-size: 12px; }
 
     /* ── Inputs ── */
     QLineEdit, QTextEdit {
         border: 1px solid #d6c0c5; border-radius: 5px;
-        padding: 6px 10px; font-family: 'Aptos Narrow'; font-size: 12px;
+        padding: 6px 10px; font-family: 'Aptos'; font-size: 12px;
         background: #ffffff; color: #1a0509;
     }
     QLineEdit:focus, QTextEdit:focus { border-color: #920d2e; }
@@ -109,7 +109,7 @@ APP_STYLE = """
     QDoubleSpinBox:focus, QSpinBox:focus { border-color: #920d2e; }
 
     /* ── Checkboxes ── */
-    QCheckBox { color: #1a0509; font-family: 'Aptos Narrow'; font-size: 12px; }
+    QCheckBox { color: #1a0509; font-family: 'Aptos'; font-size: 12px; }
 """
 
 
@@ -165,7 +165,7 @@ class PlainPasteTextEdit(QTextEdit):
     QTextEdit that always pastes as plain text and enforces
     Aptos 11pt black regardless of clipboard source formatting.
     """
-    _FONT   = "Aptos Narrow"
+    _FONT   = "Aptos"
     _SIZE   = 11.0
     _COLOR  = "#1a1a2e"
 
@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(APP_STYLE)
 
         # ── App version label (bottom-right) ──────────────────────────
-        _ver_lbl = QLabel("V1.0")
+        _ver_lbl = QLabel("V1.1")
         _ver_lbl.setStyleSheet(
             "QLabel { color:#b0a0a4; font-size:10px; padding:0 6px 2px 0; }")
         self.statusBar().addPermanentWidget(_ver_lbl)
@@ -719,9 +719,10 @@ class MainWindow(QMainWindow):
         proposal = self.lineEdit_proposal.text().strip()
         safe = _re.sub(r'[\\/:*?"<>|]', '-', proposal) if proposal else 'project'
         _date_stamp = date.today().strftime('%Y%m%d')
+        _date_part = '' if _re.search(r'\d{8}', safe) else f'-{_date_stamp}'
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Project",
-            _os.path.join(desktop, f'{safe}-{_date_stamp} {self._version_str()}.mcmxq'),
+            _os.path.join(desktop, f'{safe}{_date_part} {self._version_str()}.mcmxq'),
             "MCMXQ Project (*.mcmxq)")
         if not path:
             return
@@ -781,7 +782,7 @@ class MainWindow(QMainWindow):
         import re as _re
         self._toc_tree.clear()
         _bold_aptos = _QF('Aptos', 11); _bold_aptos.setBold(True)
-        _norm_aptos = _QF('Aptos Narrow', 10)
+        _norm_aptos = _QF('Aptos', 10)
         for i, section in enumerate(self.form_widget.sections):
             num = i + 1
             if hasattr(section, 'header'):
@@ -836,11 +837,13 @@ class MainWindow(QMainWindow):
         import os as _os, re as _re
         desktop = _os.path.join(_os.path.expanduser('~'), 'Desktop')
         proposal = self.lineEdit_proposal.text().strip()
+        project  = self.lineEdit_project.text().strip()
         safe = _re.sub(r'[\\/:*?"<>|]', '-', proposal) if proposal else \
-               self.lineEdit_project.text().strip().replace(' ', '_') or 'output'
+               _re.sub(r'[\\/:*?"<>|]', '-', project).replace(' ', '_') or 'output'
         _date_stamp = date.today().strftime('%Y%m%d')
+        _date_part = '' if _re.search(r'\d{8}', safe) else f'-{_date_stamp}'
         default_path = _os.path.join(desktop,
-                                     f'{safe}-{_date_stamp} {self._version_str()}.docx')
+                                     f'{safe}{_date_part} {self._version_str()}.docx')
         output_path, _ = QFileDialog.getSaveFileName(
             self, "Save Document", default_path, "Word Documents (*.docx)")
         if not output_path:
@@ -875,7 +878,7 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     # Set Aptos 11pt as the app-wide default font
-    app.setFont(QFont("Aptos Narrow", 11))
+    app.setFont(QFont("Aptos", 11))
     # Force light palette so dialogs and message boxes are always white
     from PyQt6.QtGui import QPalette, QColor as _QC
     light = QPalette()
