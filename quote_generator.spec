@@ -36,10 +36,36 @@ hidden = [
     'lxml.etree',
     'lxml._elementpath',
     'html.parser',
-    # 'PIL',        # only needed if app uses Pillow directly
 ]
 hidden += collect_submodules('docx')
 hidden += collect_submodules('docxtpl')
+
+# ── Unused modules to exclude ─────────────────────────────────────────────────
+# Stripping unused PyQt6 components and stdlib bloat saves ~15-20 MB.
+excluded = [
+    # Unused PyQt6 modules (each pulls in large Qt DLLs / frameworks)
+    'PyQt6.Qt3DAnimation', 'PyQt6.Qt3DCore', 'PyQt6.Qt3DExtras',
+    'PyQt6.Qt3DInput',     'PyQt6.Qt3DLogic', 'PyQt6.Qt3DRender',
+    'PyQt6.QtBluetooth',   'PyQt6.QtCharts',  'PyQt6.QtDataVisualization',
+    'PyQt6.QtDesigner',    'PyQt6.QtHelp',    'PyQt6.QtLocation',
+    'PyQt6.QtMultimedia',  'PyQt6.QtMultimediaWidgets',
+    'PyQt6.QtNfc',         'PyQt6.QtPositioning',
+    'PyQt6.QtQuick',       'PyQt6.QtQuick3D',
+    'PyQt6.QtRemoteObjects','PyQt6.QtSensors',
+    'PyQt6.QtSerialBus',   'PyQt6.QtSerialPort',
+    'PyQt6.QtSql',         'PyQt6.QtSvg', 'PyQt6.QtSvgWidgets',
+    'PyQt6.QtTest',        'PyQt6.QtWebChannel',
+    'PyQt6.QtWebEngineCore','PyQt6.QtWebEngineQuick',
+    'PyQt6.QtWebEngineWidgets','PyQt6.QtWebSockets',
+    'PyQt6.QtXml',
+    # Unused stdlib / large packages
+    'tkinter', '_tkinter',
+    'unittest', 'test',
+    'distutils', 'setuptools', 'pip',
+    'sqlite3', '_sqlite3',
+    'numpy', 'scipy', 'matplotlib', 'pandas',
+    'cryptography', 'OpenSSL',
+]
 
 a = Analysis(
     ['main.py'],
@@ -50,7 +76,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excluded,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -68,8 +94,9 @@ exe = EXE(
     name='QuoteGenerator',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=True,
     upx=True,
+    upx_exclude=['vcruntime140.dll', 'msvcp140.dll'],  # UPX can corrupt these
     console=False,                 # no console window
     icon='logo.ico',               # Windows requires .ico
 )
@@ -79,9 +106,9 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=False,
+    strip=True,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=['vcruntime140.dll', 'msvcp140.dll'],
     name='QuoteGenerator',
 )
 
@@ -94,8 +121,8 @@ if sys.platform == 'darwin':
         bundle_identifier='com.mcmx.quotegenerator',
         info_plist={
             'NSHighResolutionCapable': True,
-            'CFBundleShortVersionString': '1.0',
-            'CFBundleVersion': '1.0',
+            'CFBundleShortVersionString': '1.1',
+            'CFBundleVersion': '1.1',
             'NSRequiresAquaSystemAppearance': False,  # allow dark mode
         },
     )
