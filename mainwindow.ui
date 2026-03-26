@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>MainWindow</class>
+  <widget class="QMainWindow" name="MainWindow">
+
+    <property name="geometry">
+      <rect><x>0</x><y>0</y><width>980</width><height>820</height></rect>
+    </property>
+    <property name="windowTitle"><string>Quote Generator</string></property>
+
+    <widget class="QWidget" name="centralwidget">
+      <layout class="QVBoxLayout" name="verticalLayout_main">
+        <property name="spacing"><number>10</number></property>
+
+        <!-- ══ App header bar ══════════════════════════════════════════ -->
+        <item>
+          <widget class="QLabel" name="label_app_title">
+            <property name="text"><string>Quote Generator</string></property>
+            <property name="styleSheet">
+              <string>font-size:18px;font-weight:700;color:#1a1a2e;padding-bottom:2px;</string>
+            </property>
+          </widget>
+        </item>
+
+        <!-- ══ Collapse toggle ══════════════════════════════════════════ -->
+        <item>
+          <widget class="QPushButton" name="button_collapse_top">
+            <property name="text"><string>▼  Project Info</string></property>
+            <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+          </widget>
+        </item>
+
+        <!-- ══ Project Info panel ═══════════════════════════════════════ -->
+        <item>
+          <widget class="QWidget" name="widget_top_panel">
+            <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                <horstretch>0</horstretch><verstretch>0</verstretch>
+              </sizepolicy>
+            </property>
+
+            <!-- Outer horizontal: fields left | picture right -->
+            <layout class="QHBoxLayout" name="horizontalLayout_top_panel">
+              <property name="spacing"><number>20</number></property>
+
+              <!-- Left: form fields -->
+              <item>
+                <layout class="QFormLayout" name="formLayout_top">
+                  <property name="horizontalSpacing"><number>16</number></property>
+                  <property name="verticalSpacing"><number>10</number></property>
+                  <property name="fieldGrowthPolicy">
+                    <enum>QFormLayout::ExpandingFieldsGrow</enum>
+                  </property>
+
+                  <item row="0" column="0">
+                    <widget class="QLabel" name="label_project">
+                      <property name="text"><string>Project Name</string></property>
+                    </widget>
+                  </item>
+                  <item row="0" column="1">
+                    <widget class="QLineEdit" name="lineEdit_project">
+                      <property name="placeholderText"><string>Enter project name…</string></property>
+                      <property name="minimumSize"><size><width>280</width><height>30</height></size></property>
+                    </widget>
+                  </item>
+
+                  <item row="1" column="0">
+                    <widget class="QLabel" name="label_proposal">
+                      <property name="text"><string>Proposal Number</string></property>
+                    </widget>
+                  </item>
+                  <item row="1" column="1">
+                    <widget class="QLineEdit" name="lineEdit_proposal">
+                      <property name="placeholderText"><string>ABCD-EFG-MCMX-20260317 V1.0</string></property>
+                      <property name="minimumSize"><size><width>280</width><height>30</height></size></property>
+                    </widget>
+                  </item>
+
+                  <item row="2" column="0">
+                    <widget class="QLabel" name="label_customer">
+                      <property name="text"><string>Customer Name</string></property>
+                    </widget>
+                  </item>
+                  <item row="2" column="1">
+                    <widget class="QLineEdit" name="lineEdit_customer">
+                      <property name="placeholderText"><string>Enter customer name…</string></property>
+                      <property name="minimumSize"><size><width>280</width><height>30</height></size></property>
+                    </widget>
+                  </item>
+
+                  <item row="3" column="0">
+                    <widget class="QLabel" name="label_location">
+                      <property name="text"><string>Customer Location</string></property>
+                    </widget>
+                  </item>
+                  <item row="3" column="1">
+                    <widget class="QLineEdit" name="lineEdit_location">
+                      <property name="placeholderText"><string>City, State / Country…</string></property>
+                      <property name="minimumSize"><size><width>280</width><height>30</height></size></property>
+                    </widget>
+                  </item>
+
+                  <item row="4" column="0">
+                    <widget class="QLabel" name="label_contact">
+                      <property name="text"><string>Contact Info</string></property>
+                    </widget>
+                  </item>
+                  <item row="4" column="1">
+                    <widget class="QTextEdit" name="textEdit_contact">
+                      <property name="placeholderText"><string>Name  |  Title  |  Company  |  Phone  |  Email</string></property>
+                      <property name="minimumSize"><size><width>280</width><height>72</height></size></property>
+                      <property name="maximumSize"><size><width>16777215</width><height>72</height></size></property>
+                    </widget>
+                  </item>
+
+                </layout>
+              </item>
+
+              <!-- Right: customer logo group -->
+              <item>
+                <widget class="QWidget" name="widget_picture_group">
+                  <property name="maximumSize">
+                    <size><width>170</width><height>16777215</height></size>
+                  </property>
+                  <layout class="QVBoxLayout" name="verticalLayout_picture_area">
+                    <property name="spacing"><number>6</number></property>
+                    <item>
+                      <widget class="QLabel" name="label_picture">
+                        <property name="text"><string>Customer Logo</string></property>
+                        <property name="alignment"><set>Qt::AlignCenter</set></property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QLabel" name="label_picture_preview">
+                        <property name="text"><string>No image</string></property>
+                        <property name="alignment"><set>Qt::AlignCenter</set></property>
+                        <property name="minimumSize"><size><width>150</width><height>150</height></size></property>
+                        <property name="maximumSize"><size><width>150</width><height>150</height></size></property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QPushButton" name="button_upload_picture">
+                        <property name="text"><string>⬆  Upload</string></property>
+                        <property name="minimumSize"><size><width>150</width><height>28</height></size></property>
+                        <property name="maximumSize"><size><width>150</width><height>28</height></size></property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QPushButton" name="button_clear_picture">
+                        <property name="text"><string>✕  Clear</string></property>
+                        <property name="minimumSize"><size><width>150</width><height>28</height></size></property>
+                        <property name="maximumSize"><size><width>150</width><height>28</height></size></property>
+                      </widget>
+                    </item>
+                  </layout>
+                </widget>
+              </item>
+
+              <!-- Push everything left -->
+              <item>
+                <spacer>
+                  <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                  <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+                </spacer>
+              </item>
+
+            </layout>
+          </widget>
+        </item>
+
+        <!-- ══ Section heading ══════════════════════════════════════════ -->
+        <item>
+          <widget class="QLabel" name="label_sections_heading">
+            <property name="text"><string>Document Sections</string></property>
+            <property name="styleSheet">
+              <string>font-weight:700;font-size:13px;color:#1a1a2e;</string>
+            </property>
+          </widget>
+        </item>
+
+        <!-- ══ Scroll area ══════════════════════════════════════════════ -->
+        <item>
+          <widget class="QScrollArea" name="scrollArea_sections">
+            <property name="widgetResizable"><bool>true</bool></property>
+            <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                <horstretch>0</horstretch><verstretch>1</verstretch>
+              </sizepolicy>
+            </property>
+            <property name="minimumSize"><size><width>0</width><height>160</height></size></property>
+            <widget class="QWidget" name="scrollAreaWidgetContents">
+              <layout class="QVBoxLayout" name="verticalLayout_sections">
+                <property name="spacing"><number>12</number></property>
+              </layout>
+            </widget>
+          </widget>
+        </item>
+
+        <!-- ══ Bottom toolbar ═══════════════════════════════════════════ -->
+        <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_buttons">
+            <property name="spacing"><number>10</number></property>
+            <item>
+              <widget class="QPushButton" name="button_add_paragraph">
+                <property name="text"><string>📄  Add Section</string></property>
+                <property name="minimumSize"><size><width>130</width><height>34</height></size></property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QPushButton" name="button_add_table">
+                <property name="text"><string>📋  Add BOM Table</string></property>
+                <property name="minimumSize"><size><width>130</width><height>34</height></size></property>
+              </widget>
+            </item>
+            <item>
+              <spacer name="horizontalSpacer_buttons">
+                <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+              </spacer>
+            </item>
+            <item>
+              <widget class="QPushButton" name="button_generate_doc">
+                <property name="text"><string>Generate Quote  →</string></property>
+                <property name="minimumSize"><size><width>200</width><height>36</height></size></property>
+              </widget>
+            </item>
+          </layout>
+        </item>
+
+      </layout>
+    </widget>
+  </widget>
+  <resources/>
+  <connections/>
+</ui>

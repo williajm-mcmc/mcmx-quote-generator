@@ -1,0 +1,91 @@
+name: Build QuoteGenerator
+
+on:
+  push:
+    tags:
+      - 'v*'          # trigger on version tags like v1.0, v1.1
+  workflow_dispatch:  # also allows manual trigger from GitHub UI
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyinstaller PyQt6 python-docx docxtpl pillow
+
+      - name: Convert icon
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('logo.png').convert('RGBA')
+          img.save('logo.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          "
+
+      - name: Build
+        run: python -m PyInstaller quote_generator.spec
+
+      - name: Zip output
+        run: Compress-Archive -Path dist\QuoteGenerator\* -DestinationPath QuoteGenerator-Windows.zip
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuoteGenerator-Windows
+          path: QuoteGenerator-Windows.zip
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyinstaller PyQt6 python-docx docxtpl pillow
+
+      - name: Convert icon to icns
+        run: |
+          mkdir -p MyIcon.iconset
+          python -c "
+          from PIL import Image
+          for size in [16,32,64,128,256,512,1024]:
+              img = Image.open('logo.png').convert('RGBA').resize((size,size), Image.LANCZOS)
+              img.save(f'MyIcon.iconset/icon_{size}x{size}.png')
+          "
+          iconutil -c icns MyIcon.iconset -o logo.icns
+
+      - name: Patch spec for macOS icon
+        run: sed -i '' "s/icon='logo.ico'/icon='logo.icns'/" quote_generator.spec
+
+      - name: Build
+        run: python -m PyInstaller quote_generator.spec
+
+      - name: Zip output
+        run: cd dist && zip -r ../QuoteGenerator-Mac.zip QuoteGenerator.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuoteGenerator-Mac
+          path: QuoteGenerator-Mac.zip
+
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            QuoteGenerator-Windows/QuoteGenerator-Windows.zip
+            QuoteGenerator-Mac/QuoteGenerator-Mac.zip
