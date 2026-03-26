@@ -33,6 +33,22 @@ jobs:
       - name: Build
         run: python -m PyInstaller quote_generator.spec
 
+      - name: Sign executable (Microsoft Trusted Signing)
+        if: ${{ secrets.TRUSTED_SIGNING_ENDPOINT != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name:     ${{ secrets.TRUSTED_SIGNING_CERT_PROFILE }}
+          files-folder:                 dist\QuoteGenerator
+          files-folder-filter:          exe
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
       - name: Zip output
         run: Compress-Archive -Path dist\QuoteGenerator\* -DestinationPath QuoteGenerator-Windows.zip
         shell: pwsh
