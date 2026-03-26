@@ -6,6 +6,9 @@ on:
       - 'v*'          # trigger on version tags like v1.0, v1.1
   workflow_dispatch:  # also allows manual trigger from GitHub UI
 
+permissions:
+  contents: write   # required to create GitHub Releases
+
 jobs:
   build-windows:
     runs-on: windows-latest
