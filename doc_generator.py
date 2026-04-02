@@ -2,6 +2,7 @@
 import os
 import sys
 import re
+import math as _math
 from html.parser import HTMLParser
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm, Pt, RGBColor
@@ -165,8 +166,8 @@ def _build_bom_table(doc, rows):
         else:
             _style_cell(cells[0], part, bold=False, font_size=11)
         _style_cell(cells[1], qty,  bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _style_cell(cells[2], f"${int(unit_price):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
-        _style_cell(cells[3], f"${int(line_total):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
+        _style_cell(cells[2], f"${_math.ceil(unit_price):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
+        _style_cell(cells[3], f"${_math.ceil(line_total):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
 
     # Apply column-width and default alignment first, then stamp total row
     # alignment afterwards so _set_table_full_width can't clobber it.
@@ -176,7 +177,7 @@ def _build_bom_table(doc, rows):
     merged = total_row[0].merge(total_row[2])
     _style_cell(merged, "Total Price:", bold=True, font_size=11,
                 color=TOTAL_COLOR, align=WD_ALIGN_PARAGRAPH.RIGHT)
-    _style_cell(total_row[3], f"${int(grand_total):,}", bold=True, font_size=11,
+    _style_cell(total_row[3], f"${_math.ceil(grand_total):,}", bold=True, font_size=11,
                 color=TOTAL_COLOR, align=WD_ALIGN_PARAGRAPH.RIGHT)
     return table
 
@@ -1452,10 +1453,11 @@ def generate_doc(form_data, template_path=None, output_path=None):
             rich_data[key] = html_body or section.get("text","")
         elif section["type"] == "table":
             key = f"BOM_TABLE_{i}"
-            toc_entries.append((1, sec_num, "Bill of Material"))
+            bom_hdr = section.get("header", "").strip() or "Bill of Material"
+            toc_entries.append((1, sec_num, bom_hdr))
             sections.append({"type": "table", "placeholder": key,
                              "section_number": sec_num,
-                             "header": "Bill of Material"})
+                             "header": bom_hdr})
             rows = section.get("rows", [])
             table_data[key] = rows
 

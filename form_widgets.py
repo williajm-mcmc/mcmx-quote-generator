@@ -144,9 +144,17 @@ class RichTextDelegate(QStyledItemDelegate):
         from PyQt6.QtWidgets import QStyleOptionViewItem, QApplication, QStyle
         from PyQt6.QtGui import QTextDocument, QAbstractTextDocumentLayout
         from PyQt6.QtCore import QSizeF
-        # Draw the base background / selection highlight
+        # Fill background with solid color first so previous cell content
+        # doesn't bleed through when re-painting after an edit.
+        bg = index.data(Qt.ItemDataRole.BackgroundRole)
+        if bg and hasattr(bg, 'color'):
+            painter.fillRect(option.rect, bg.color())
+        else:
+            painter.fillRect(option.rect, option.palette.base())
+        # Draw the selection highlight on top of the solid background
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
+        opt.text = ""   # prevent default text draw
         style = opt.widget.style() if opt.widget else QApplication.style()
         style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, opt.widget)
         # Render HTML — use a fixed Aptos 11pt font so bullets/formatting
@@ -2145,6 +2153,19 @@ class TableSection(CollapsibleCard):
         self.table.setItemDelegateForColumn(self._COL_COST,   NumericDelegate(self.table))
         self.table.setItemDelegateForColumn(self._COL_MARGIN, NumericDelegate(self.table))
 
+        # Custom section header field
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(6)
+        hdr_lbl = QLabel("Section heading:")
+        hdr_lbl.setStyleSheet("QLabel { color:#3a3a5c; font-size:11px; font-weight:600; }")
+        self._bom_header_edit = QLineEdit()
+        self._bom_header_edit.setPlaceholderText("Bill of Material")
+        self._bom_header_edit.setStyleSheet(FIELD_STYLE + "QLineEdit { font-weight:600; }")
+        self._bom_header_edit.textChanged.connect(self._on_bom_header_changed)
+        hdr_row.addWidget(hdr_lbl)
+        hdr_row.addWidget(self._bom_header_edit)
+        self._body_layout.addLayout(hdr_row)
+
         # Note above the table — fixed height, reference-only notice
         note = QLabel(
             "ℹ  Cost and Margin % columns are for reference only "
@@ -2418,9 +2439,9 @@ class TableSection(CollapsibleCard):
             item.setText(text)
 
         line_total = qty * marked_up_unit
-        _set(self._COL_MKUP,     f"${int(marked_up_unit):,}")
-        _set(self._COL_LINE_TOT, f"${int(line_total):,}")
-        _set(self._COL_TOTAL,    f"${int(line_total):,}")
+        _set(self._COL_MKUP,     f"${_math.ceil(marked_up_unit):,}")
+        _set(self._COL_LINE_TOT, f"${_math.ceil(line_total):,}")
+        _set(self._COL_TOTAL,    f"${_math.ceil(line_total):,}")
         self.table.blockSignals(False)
         self._update_grand_total()
 
@@ -2432,7 +2453,7 @@ class TableSection(CollapsibleCard):
             if item and item.text():
                 try: grand += float(item.text().replace('$', '').replace(',', ''))
                 except ValueError: pass
-        self._grand_total_lbl.setText(f"Grand Total:  ${int(grand):,}")
+        self._grand_total_lbl.setText(f"Grand Total:  ${_math.ceil(grand):,}")
 
     def _refresh_all_totals(self):
         for row in range(self.table.rowCount()):
@@ -2478,8 +2499,15 @@ class TableSection(CollapsibleCard):
         if self._on_remove: self._on_remove(self)
         self.setParent(None); self.deleteLater()
 
+    def _on_bom_header_changed(self, text):
+        if hasattr(self, '_section_num'):
+            self._update_bom_title(self._section_num)
+
     def _update_bom_title(self, num: int):
-        self.set_title(f"⊞  BOM Table — Section {num}")
+        self._section_num = num
+        hdr = self._bom_header_edit.text().strip() if hasattr(self, '_bom_header_edit') else ""
+        label = hdr if hdr else "BOM Table"
+        self.set_title(f"⊞  {label} — Section {num}")
 
     def get_data(self):
         # Export: Part Number, Qty, Sale Price (marked-up unit), Line Total
@@ -2498,7 +2526,8 @@ class TableSection(CollapsibleCard):
                 self.table.item(row, self._COL_TOTAL).text()    if self.table.item(row, self._COL_TOTAL)    else "",
                 part_html,   # index 5 — rich HTML for Part Number
             ])
-        return {"type": "table", "rows": rows}
+        bom_hdr = self._bom_header_edit.text().strip() if hasattr(self, '_bom_header_edit') else ""
+        return {"type": "table", "rows": rows, "header": bom_hdr}
 
 
 # ── ParagraphSection ──────────────────────────────────────────────────────────
@@ -2672,6 +2701,9 @@ class DynamicFormWidget:
                     widget.rich_editor.editor.setPlainText(sec.get("text", ""))
 
             elif stype == "table":
+                saved_hdr = sec.get("header", "")
+                if saved_hdr and saved_hdr.lower() != "bill of material":
+                    widget._bom_header_edit.setText(saved_hdr)
                 tbl = widget.table
                 tbl.blockSignals(True)
                 rows_data = sec.get("rows", [])
