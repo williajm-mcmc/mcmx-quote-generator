@@ -93,7 +93,7 @@ class _Card(QFrame):
         super().__init__(parent)
         self.setStyleSheet(
             f"QFrame {{ background:{_BG_CARD}; border:1px solid {_BORDER};"
-            "  border-radius:8px; }}"
+            "  border-radius:8px; }"
         )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
@@ -116,7 +116,7 @@ class _Card(QFrame):
         self._toggle_btn = QPushButton("▼")
         self._toggle_btn.setFixedSize(22, 22)
         self._toggle_btn.setStyleSheet(
-            "QPushButton { background:transparent; border:none;"
+            f"QPushButton {{ background:transparent; border:none;"
             f"  color:{_RED}; font-size:12px; font-weight:700; padding:0; }}"
         )
         self._toggle_btn.clicked.connect(self._toggle)
@@ -125,7 +125,7 @@ class _Card(QFrame):
         self._title_lbl = QLabel(title)
         self._title_lbl.setStyleSheet(
             f"QLabel {{ font-size:13px; font-weight:700; color:{_RED};"
-            "  background:transparent; border:none; padding:0; }}"
+            "  background:transparent; border:none; padding:0; }"
         )
         hdr_row.addWidget(self._title_lbl)
         hdr_row.addStretch()
@@ -134,7 +134,7 @@ class _Card(QFrame):
         self._subtotal_lbl = QLabel("")
         self._subtotal_lbl.setStyleSheet(
             f"QLabel {{ font-size:12px; font-weight:700; color:{_RED};"
-            "  background:transparent; border:none; padding:0 4px; }}"
+            "  background:transparent; border:none; padding:0 4px; }"
         )
         hdr_row.addWidget(self._subtotal_lbl)
 
@@ -600,7 +600,7 @@ class _SummaryCard(QFrame):
         super().__init__(parent)
         self.setStyleSheet(
             f"QFrame {{ background:{_BG_CARD}; border:2px solid {_RED};"
-            "  border-radius:8px; }}"
+            "  border-radius:8px; }"
         )
 
         layout = QVBoxLayout(self)
@@ -610,7 +610,7 @@ class _SummaryCard(QFrame):
         title = QLabel("Cost Summary")
         title.setStyleSheet(
             f"QLabel {{ font-size:14px; font-weight:800; color:{_RED};"
-            "  border:none; padding:0; }}"
+            "  border:none; padding:0; }"
         )
         layout.addWidget(title)
 
@@ -633,7 +633,7 @@ class _SummaryCard(QFrame):
             w = 700 if bold else 400
             lbl.setStyleSheet(
                 f"QLabel {{ font-size:12px; font-weight:{w}; color:{col};"
-                "  border:none; padding:0; }}"
+                "  border:none; padding:0; }"
             )
             row.addWidget(lbl)
             if is_input:
