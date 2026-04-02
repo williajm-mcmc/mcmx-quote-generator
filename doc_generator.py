@@ -997,7 +997,8 @@ def _inject_section_numbers(doc, sections):
         return r
 
     _norm = lambda s: ' '.join(s.split()).lower()
-    bookmarks = {}   # sec_num (str) -> bookmark_name (str)
+    bookmarks    = {}   # sec_num (str) -> bookmark_name (str)
+    _stamped_ids = set()  # id(para._p) of already-stamped paragraphs
 
     for sec in sections:
         hdr      = sec.get("header", "").strip()
@@ -1006,6 +1007,11 @@ def _inject_section_numbers(doc, sections):
         if not hdr or not num:
             continue
         for para in doc.paragraphs:
+            # Skip paragraphs already stamped by an earlier section so that
+            # multiple BOM sections with the same header ("Bill of Material")
+            # each match a distinct paragraph instead of all piling onto the first.
+            if id(para._p) in _stamped_ids:
+                continue
             text = para.text.strip()
             # Normalised-whitespace match so minor spacing differences between
             # the form and the rendered template don't break matching.
@@ -1025,6 +1031,7 @@ def _inject_section_numbers(doc, sections):
             bm_name = f'_tocs{num}'
             _stamp_bookmark(para._p, bm_name, 1000 + len(bookmarks), qn)
             bookmarks[num] = bm_name
+            _stamped_ids.add(id(para._p))
             break
 
     return bookmarks

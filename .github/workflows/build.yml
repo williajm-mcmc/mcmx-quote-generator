@@ -12,6 +12,8 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +36,7 @@ jobs:
         run: python -m PyInstaller quote_generator.spec
 
       - name: Sign executable (Microsoft Trusted Signing)
-        if: ${{ secrets.TRUSTED_SIGNING_ENDPOINT != '' }}
+        if: env.TRUSTED_SIGNING_ENDPOINT != ''
         uses: azure/trusted-signing-action@v0
         with:
           azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
