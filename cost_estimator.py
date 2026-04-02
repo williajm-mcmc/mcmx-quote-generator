@@ -767,6 +767,8 @@ class CostEstimatorWidget(QWidget):
         self._recalculate()
 
     def _recalculate(self):
+        if not hasattr(self, '_summary'):
+            return
         self._summary.update(
             self._consulting.subtotal(),
             self._third_party.subtotal(),
