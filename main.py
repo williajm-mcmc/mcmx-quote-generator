@@ -13,7 +13,7 @@ def _resource_path(relative):
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
     QWidget, QVBoxLayout, QDoubleSpinBox, QLabel, QHBoxLayout, QPushButton,
-    QTextEdit, QSizePolicy
+    QTextEdit, QSizePolicy, QTabWidget,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
@@ -21,6 +21,7 @@ from PyQt6.uic import loadUi
 
 from form_widgets import DynamicFormWidget, DragDropLabel
 from doc_generator import generate_doc
+from cost_estimator import CostEstimatorWidget
 
 
 APP_STYLE = """
@@ -577,12 +578,57 @@ class MainWindow(QMainWindow):
         self.button_add_paragraph.clicked.connect(self._add_paragraph)
         self.button_generate_doc.clicked.connect(self.generate_document)
 
-
         self.button_upload_picture.clicked.connect(self.upload_picture)
         self.button_clear_picture.clicked.connect(self._picture_label.clear_image)
         self.button_collapse_top.clicked.connect(self._toggle_top_panel)
 
         self._top_collapsed = False
+
+        # ── Tab wrapper ─────────────────────────────────────────────────────
+        # Move everything below the header bar into a "Quote Generator" tab
+        # and add a "Cost Estimator" tab alongside it.
+        _main_layout = self.centralwidget.layout()
+
+        # Collect all items from index 1 onwards (everything after _header_bar)
+        _tab_items = []
+        while _main_layout.count() > 1:
+            _item = _main_layout.takeAt(1)
+            if _item.widget():
+                _tab_items.append(_item.widget())
+            elif _item.layout():
+                _tab_items.append(_item.layout())
+
+        # Quote tab container
+        _quote_tab = QWidget()
+        _quote_tab.setStyleSheet("QWidget { background:transparent; }")
+        _qt_layout = QVBoxLayout(_quote_tab)
+        _qt_layout.setContentsMargins(0, 8, 0, 0)
+        _qt_layout.setSpacing(10)
+        for _w in _tab_items:
+            if isinstance(_w, QWidget):
+                _qt_layout.addWidget(_w)
+            else:
+                _qt_layout.addLayout(_w)
+
+        # Cost Estimator tab
+        self._cost_estimator = CostEstimatorWidget()
+
+        # Tab widget
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(
+            "QTabWidget::pane { border:none; background:transparent; }"
+            "QTabBar::tab {"
+            "  background:#f9f0f2; color:#920d2e;"
+            "  border:1px solid #d6c0c5; border-bottom:none;"
+            "  border-radius:5px 5px 0 0;"
+            "  padding:6px 20px; font-size:12px; font-weight:600; }"
+            "QTabBar::tab:selected {"
+            "  background:#920d2e; color:#ffffff; }"
+            "QTabBar::tab:hover:!selected { background:#fdf0f3; }"
+        )
+        self._tabs.addTab(_quote_tab,              "Quote Generator")
+        self._tabs.addTab(self._cost_estimator,    "Cost Estimator")
+        _main_layout.addWidget(self._tabs)
 
     def _get_global_margin(self) -> float:
         return self._global_margin_value
@@ -727,6 +773,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         state = self.form_widget.collect_project_state(self._collect_fields())
+        state["cost_estimator"] = self._cost_estimator.get_data()
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(state, f, indent=2, ensure_ascii=False)
@@ -773,6 +820,8 @@ class MainWindow(QMainWindow):
             self._version_history.addItem(entry)
         self._update_version_label()
         self.form_widget.restore_project_state(state)
+        if "cost_estimator" in state:
+            self._cost_estimator.restore_data(state["cost_estimator"])
         _msg(self, "info", "Project Loaded", "✔  MCMXQ project restored.")
 
     def _refresh_toc(self):
@@ -865,6 +914,7 @@ class MainWindow(QMainWindow):
             _mcmxq_path = _os.path.splitext(output_path)[0] + '.mcmxq'
             try:
                 _state = self.form_widget.collect_project_state(self._collect_fields())
+                _state["cost_estimator"] = self._cost_estimator.get_data()
                 with open(_mcmxq_path, 'w', encoding='utf-8') as _mf:
                     json.dump(_state, _mf, indent=2, ensure_ascii=False)
             except Exception as _me:
