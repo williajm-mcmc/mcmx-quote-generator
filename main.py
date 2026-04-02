@@ -332,16 +332,18 @@ class MainWindow(QMainWindow):
         margin_layout.addWidget(self._global_margin_minus)
         margin_layout.addSpacing(8)
 
-        self._global_margin_lbl = QLabel(f"{self._global_margin_value:.1f} %")
+        from PyQt6.QtWidgets import QLineEdit as _QLE
+        self._global_margin_lbl = _QLE(f"{self._global_margin_value:.1f}")
         self._global_margin_lbl.setFixedWidth(74)
         self._global_margin_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._global_margin_lbl.setStyleSheet(
-            "QLabel { background:#ffffff; border:1px solid #6a8fd8;"
-            "  border-radius:4px; color:#920d2e; font-size:12px; font-weight:700;"
+            "QLineEdit { background:#ffffff; border:1px solid #6a8fd8;"
+            "  border-radius:4px; color:#920d2e; font-size:12px;"
             "  font-weight:600; padding:4px 6px; }")
         self._global_margin_lbl.setToolTip(
             "Global margin applied to all BOM tables.\n"
             "Formula: Price = Cost / (1 - Margin%/100)")
+        self._global_margin_lbl.editingFinished.connect(self._on_global_margin_typed)
         margin_layout.addWidget(self._global_margin_lbl)
         margin_layout.addSpacing(8)
 
@@ -642,9 +644,17 @@ class MainWindow(QMainWindow):
     def _decrement_global_margin(self):
         self._set_global_margin(max(0.0, self._global_margin_value - 1.0))
 
+    def _on_global_margin_typed(self):
+        try:
+            v = float(self._global_margin_lbl.text().replace('%', '').strip())
+        except ValueError:
+            self._global_margin_lbl.setText(f"{self._global_margin_value:.1f}")
+            return
+        self._set_global_margin(max(0.0, min(99.9, v)))
+
     def _set_global_margin(self, v: float):
         self._global_margin_value = round(v, 1)
-        self._global_margin_lbl.setText(f"{self._global_margin_value:.1f} %")
+        self._global_margin_lbl.setText(f"{self._global_margin_value:.1f}")
         # Sync hidden spin so existing signal chain fires
         self._global_margin_spin.blockSignals(True)
         self._global_margin_spin.setValue(self._global_margin_value)

@@ -2008,8 +2008,10 @@ class MarginWidget(QWidget):
     """
     def __init__(self, global_margin_ref=None, parent=None):
         super().__init__(parent)
-        self._value      = 20.0
         self._refresh_cb = None
+        # Initialise from the live global value so new BOMs pick up whatever
+        # the user has already set, rather than always starting at 20.
+        self._value = global_margin_ref() if global_margin_ref else 20.0
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2032,14 +2034,15 @@ class MarginWidget(QWidget):
 
         layout.addSpacing(8)
 
-        self._lbl = QLabel("20.0 %")
+        self._lbl = QLineEdit(f"{self._value:.1f}")
         self._lbl.setFixedWidth(74)
         self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl.setStyleSheet(
-            "QLabel { background:#ffffff; border:1px solid #6a8fd8;"
+            "QLineEdit { background:#ffffff; border:1px solid #6a8fd8;"
             "  border-radius:4px; color:#1a1a2e; font-size:12px;"
             "  font-weight:600; padding:4px 6px; }")
         self._lbl.setToolTip("Margin %. Formula: Price = Cost / (1 - Margin/100)")
+        self._lbl.editingFinished.connect(self._on_typed)
         layout.addWidget(self._lbl)
 
         layout.addSpacing(8)
@@ -2075,17 +2078,25 @@ class MarginWidget(QWidget):
     def set_refresh_callback(self, fn):
         self._refresh_cb = fn
 
-    def _increment(self):
-        self._value = min(99.0, round(self._value + 1.0, 1))
-        self._lbl.setText(f"{self._value:.1f} %")
+    def _set_value(self, v: float):
+        self._value = max(0.0, min(99.9, round(v, 1)))
+        self._lbl.setText(f"{self._value:.1f}")
         if self._refresh_cb:
             self._refresh_cb()
 
+    def _on_typed(self):
+        try:
+            v = float(self._lbl.text().replace('%', '').strip())
+        except ValueError:
+            self._lbl.setText(f"{self._value:.1f}")
+            return
+        self._set_value(v)
+
+    def _increment(self):
+        self._set_value(self._value + 1.0)
+
     def _decrement(self):
-        self._value = max(0.0, round(self._value - 1.0, 1))
-        self._lbl.setText(f"{self._value:.1f} %")
-        if self._refresh_cb:
-            self._refresh_cb()
+        self._set_value(self._value - 1.0)
 
     def is_enabled(self):  return True
     def show_preview(self): return True
@@ -2477,7 +2488,7 @@ class TableSection(CollapsibleCard):
         v = self._global_margin_ref() if self._global_margin_ref else 20.0
         self._margin_widget._value = v
         if hasattr(self._margin_widget, '_lbl'):
-            self._margin_widget._lbl.setText(f"{v:.1f} %")
+            self._margin_widget._lbl.setText(f"{v:.1f}")
         # Update Margin % cells — skip rows where user has manually overridden
         global_str = f"{v:.1f}"
         self.table.blockSignals(True)
