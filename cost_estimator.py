@@ -11,10 +11,13 @@ Sections:
 """
 
 import math
+import json
+import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QScrollArea, QFrame, QSizePolicy, QDoubleSpinBox, QAbstractItemView,
+    QFileDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QDoubleValidator, QIntValidator
@@ -763,6 +766,39 @@ class CostEstimatorWidget(QWidget):
         scroll.setWidget(content)
         root.addWidget(scroll)
 
+        # ── Bottom action bar ──────────────────────────────────────────────
+        bar = QWidget()
+        bar.setStyleSheet(
+            "QWidget { background:#f9f0f2; border-top:1px solid #d6c0c5; }"
+        )
+        bar.setFixedHeight(52)
+        bar_row = QHBoxLayout(bar)
+        bar_row.setContentsMargins(16, 8, 16, 8)
+        bar_row.setSpacing(10)
+
+        import_btn = QPushButton("⬆  Import MCMXC…")
+        import_btn.setStyleSheet(
+            "QPushButton { background:#ffffff; color:#920d2e;"
+            "  border:1px solid #d6c0c5; border-radius:5px;"
+            "  padding:7px 18px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#fdf0f3; border-color:#920d2e; }"
+        )
+        import_btn.clicked.connect(self.import_cost_sheet)
+        bar_row.addWidget(import_btn)
+        bar_row.addStretch()
+
+        gen_btn = QPushButton("⬇  Generate Cost Sheet")
+        gen_btn.setStyleSheet(
+            "QPushButton { background:#920d2e; color:#ffffff;"
+            "  border:none; border-radius:5px;"
+            "  padding:7px 22px; font-size:13px; font-weight:700; }"
+            "QPushButton:hover { background:#7a0b27; }"
+            "QPushButton:pressed { background:#600820; }"
+        )
+        gen_btn.clicked.connect(self.generate_cost_sheet)
+        bar_row.addWidget(gen_btn)
+        root.addWidget(bar)
+
         # Initial calculation
         self._recalculate()
 
@@ -799,3 +835,284 @@ class CostEstimatorWidget(QWidget):
         self._travel.restore_data(d.get("travel", {}))
         self._summary.restore_data(d.get("summary", {}))
         self._recalculate()
+
+    # ── Generate / Import ──────────────────────────────────────────────────
+    def generate_cost_sheet(self):
+        """Save .mcmxc + Excel breakdown side-by-side."""
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        client  = self._client.text().strip().replace(" ", "_") or "CostSheet"
+        import re as _re
+        safe = _re.sub(r'[\\/:*?"<>|]', "-", client)
+        default = os.path.join(desktop, f"{safe}.mcmxc")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Cost Sheet", default,
+            "MCMX Cost Sheet (*.mcmxc)")
+        if not path:
+            return
+        # ── .mcmxc (JSON) ─────────────────────────────────────────────────
+        data = self.get_data()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"_type": "mcmxc", "_version": 1, **data}, f,
+                          indent=2, ensure_ascii=False)
+        except Exception as e:
+            QMessageBox.critical(self, "Save Failed", str(e)); return
+        # ── Excel ──────────────────────────────────────────────────────────
+        xlsx_path = os.path.splitext(path)[0] + ".xlsx"
+        try:
+            _export_excel(data, xlsx_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Excel Export Failed", str(e))
+            return
+        QMessageBox.information(
+            self, "Cost Sheet Generated",
+            f"✔  Files saved:\n{path}\n{xlsx_path}")
+
+    def import_cost_sheet(self):
+        """Load a previously saved .mcmxc file."""
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Cost Sheet", desktop,
+            "MCMX Cost Sheet (*.mcmxc)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self, "Import Failed", str(e)); return
+        self.restore_data(data)
+        QMessageBox.information(self, "Imported", "✔  Cost sheet restored.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Excel export
+# ══════════════════════════════════════════════════════════════════════════════
+def _export_excel(data: dict, path: str):
+    """
+    Write a formatted Excel workbook from the cost estimator data dict.
+    Requires openpyxl (already a transitive dependency via python-docx).
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cost Breakdown"
+
+    # ── Colour palette ────────────────────────────────────────────────────
+    RED     = "920D2E"
+    RED_LT  = "F5D0DA"
+    GRAY    = "F4F6FA"
+    BLUE_BG = "E8F0FE"
+    BLUE_FG = "1A3A6E"
+    WHITE   = "FFFFFF"
+    DARK    = "1A0509"
+    BDR_C   = "D6C0C5"
+
+    thin = Side(style="thin", color=BDR_C)
+    bdr  = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _fill(hex_color):
+        return PatternFill("solid", fgColor=hex_color)
+
+    def _font(bold=False, color=DARK, size=11, italic=False):
+        return Font(name="Aptos", bold=bold, color=color, size=size, italic=italic)
+
+    def _align(h="left", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+
+    # ── Column widths ─────────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 38
+    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 16
+
+    row = 1
+
+    # ── Title bar ─────────────────────────────────────────────────────────
+    ws.merge_cells(f"A{row}:D{row}")
+    c = ws.cell(row, 1, "MCMX Cost Estimator")
+    c.font = _font(bold=True, color=WHITE, size=16)
+    c.fill = _fill(RED)
+    c.alignment = _align("center")
+    ws.row_dimensions[row].height = 28
+    row += 1
+
+    # ── Project info ──────────────────────────────────────────────────────
+    for lbl, key in [("Client", "client"), ("Project", "project"), ("Date", "date")]:
+        ws.cell(row, 1, lbl).font = _font(bold=True)
+        ws.merge_cells(f"B{row}:D{row}")
+        ws.cell(row, 2, data.get(key, "")).font = _font()
+        ws.row_dimensions[row].height = 18
+        row += 1
+    row += 1  # blank
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+    def _section_hdr(title):
+        nonlocal row
+        ws.merge_cells(f"A{row}:D{row}")
+        c = ws.cell(row, 1, title)
+        c.font = _font(bold=True, color=WHITE, size=12)
+        c.fill = _fill(RED)
+        c.alignment = _align("left")
+        ws.row_dimensions[row].height = 22
+        row += 1
+
+    def _col_hdrs(*labels):
+        nonlocal row
+        for ci, lbl in enumerate(labels, 1):
+            c = ws.cell(row, ci, lbl)
+            c.font = _font(bold=True)
+            c.fill = _fill(GRAY)
+            c.alignment = _align("center")
+            c.border = bdr
+        ws.row_dimensions[row].height = 18
+        row += 1
+
+    def _data_row(*vals, shade=False):
+        nonlocal row
+        bg = GRAY if shade else WHITE
+        for ci, val in enumerate(vals, 1):
+            c = ws.cell(row, ci, val)
+            c.font = _font()
+            c.fill = _fill(bg)
+            c.alignment = _align("right" if ci > 1 else "left")
+            c.border = bdr
+            if isinstance(val, (int, float)) and ci > 1:
+                c.number_format = "#,##0"
+        ws.row_dimensions[row].height = 17
+        row += 1
+
+    def _subtotal_row(val):
+        nonlocal row
+        ws.merge_cells(f"A{row}:C{row}")
+        lc = ws.cell(row, 1, "Subtotal")
+        lc.font = _font(bold=True)
+        lc.fill = _fill(RED_LT)
+        lc.alignment = _align("right")
+        lc.border = bdr
+        vc = ws.cell(row, 4, val)
+        vc.font = _font(bold=True, color=BLUE_FG)
+        vc.fill = _fill(BLUE_BG)
+        vc.alignment = _align("right")
+        vc.border = bdr
+        vc.number_format = "#,##0"
+        ws.row_dimensions[row].height = 17
+        row += 2  # blank after section
+
+    def _summary_row(label, value, accent=False, pct_str=None):
+        nonlocal row
+        ws.merge_cells(f"A{row}:C{row}")
+        lc = ws.cell(row, 1, label)
+        lc.font = _font(bold=accent, color=RED if accent else DARK)
+        lc.alignment = _align("right")
+        lc.border = bdr
+        if pct_str is not None:
+            vc = ws.cell(row, 4, pct_str)
+            vc.number_format = "@"
+        else:
+            vc = ws.cell(row, 4, value)
+            vc.number_format = "#,##0"
+        vc.font = _font(bold=accent, color=RED if accent else BLUE_FG)
+        vc.fill = _fill(RED_LT if accent else BLUE_BG)
+        vc.alignment = _align("right")
+        vc.border = bdr
+        ws.row_dimensions[row].height = 18
+        row += 1
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 1. Consulting Effort
+    # ─────────────────────────────────────────────────────────────────────
+    cons = data.get("consulting", {})
+    rate = _num_s(cons.get("rate", "0"))
+    hours_list = cons.get("rows", [])
+    cat_labels = ["On-Site Time (hrs)", "Travel Time (hrs)", "Other (hrs)"]
+
+    _section_hdr("1.  Consulting Effort")
+    _col_hdrs("Category", "Hours", "Rate ($/hr)", "Cost")
+    cons_sub = 0.0
+    for i, lbl in enumerate(cat_labels):
+        hrs = _num_s(hours_list[i] if i < len(hours_list) else "0")
+        cost = math.ceil(hrs * rate)
+        cons_sub += cost
+        _data_row(lbl, hrs, rate, cost, shade=(i % 2 == 1))
+    _subtotal_row(math.ceil(cons_sub))
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 2. Third Party
+    # ─────────────────────────────────────────────────────────────────────
+    tp = data.get("third_party", {})
+    _section_hdr("2.  Third Party")
+    _col_hdrs("Description", "Qty", "", "Cost Total")
+    tp_total = 0.0
+    for i, row_vals in enumerate(tp.get("rows", [])):
+        desc, qty, cost = (row_vals + ["", "0", "0"])[:3]
+        q = _num_s(qty); c = _num_s(cost)
+        v = math.ceil(q * c)
+        tp_total += v
+        _data_row(desc, q, "", v, shade=(i % 2 == 1))
+    _subtotal_row(math.ceil(tp_total))
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 3. Hardware / Software / Materials
+    # ─────────────────────────────────────────────────────────────────────
+    mat = data.get("materials", {})
+    _section_hdr("3.  Hardware / Software / Materials")
+    _col_hdrs("Description", "Qty", "Cost Per", "Cost Total")
+    mat_total = 0.0
+    for i, row_vals in enumerate(mat.get("rows", [])):
+        desc, qty, cost = (row_vals + ["", "0", "0"])[:3]
+        q = _num_s(qty); c = _num_s(cost)
+        v = math.ceil(q * c)
+        mat_total += v
+        _data_row(desc, q, c, v, shade=(i % 2 == 1))
+    _subtotal_row(math.ceil(mat_total))
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 4. Travel & Expenses
+    # ─────────────────────────────────────────────────────────────────────
+    trav = data.get("travel", {})
+    qty_list  = trav.get("qty",  [])
+    rate_list = trav.get("rate", [])
+    t_labels  = ["Airfare", "Hotel (nights)", "Food (meals)", "Car (miles)"]
+    _section_hdr("4.  Travel & Expenses")
+    _col_hdrs("Category", "Qty", "Rate", "Cost")
+    trav_total = 0.0
+    for i, lbl in enumerate(t_labels):
+        q = _num_s(qty_list[i]  if i < len(qty_list)  else "0")
+        r = _num_s(rate_list[i] if i < len(rate_list) else "0")
+        v = math.ceil(q * r)
+        trav_total += v
+        _data_row(lbl, q, r, v, shade=(i % 2 == 1))
+    _subtotal_row(math.ceil(trav_total))
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 5. Summary
+    # ─────────────────────────────────────────────────────────────────────
+    summ = data.get("summary", {})
+    risk_pct   = _num_s(summ.get("risk_pct",   "0"))
+    margin_pct = _num_s(summ.get("margin_pct", "0"))
+    cost_before = math.ceil(cons_sub) + math.ceil(tp_total) + math.ceil(mat_total) + math.ceil(trav_total)
+    risk_cost   = math.ceil(cost_before * risk_pct / 100)
+    estimated   = cost_before + risk_cost
+    resale      = math.ceil(estimated / (1 - margin_pct / 100)) if 0 < margin_pct < 100 else estimated
+    profit      = resale - estimated
+
+    _section_hdr("5.  Cost Summary")
+    _summary_row("Cost Before Risk",                    cost_before)
+    _summary_row(f"Risk / Insurance ({risk_pct:.1f}%)", risk_cost)
+    _summary_row("Estimated Cost",                      estimated)
+    _summary_row(f"Margin ({margin_pct:.1f}%)",         None, pct_str=f"{margin_pct:.1f}%")
+    _summary_row("Recommended Resale",                  resale,  accent=True)
+    _summary_row("Profit",                              profit,  accent=True)
+
+    wb.save(path)
+
+
+def _num_s(s) -> float:
+    """Parse a numeric string from saved cost data."""
+    try:
+        return float(str(s).replace(",", "").replace("$", "").strip() or 0)
+    except (ValueError, TypeError):
+        return 0.0

@@ -230,7 +230,10 @@ class MainWindow(QMainWindow):
         act_import.setShortcut("Ctrl+O")
         act_import.triggered.connect(self.load_project)
         file_menu.addAction(act_import)
-        file_menu.addSeparator()
+        act_import_c = QAction("Import MCMXC…", self)
+        act_import_c.triggered.connect(
+            lambda: self._cost_estimator.import_cost_sheet())
+        file_menu.addAction(act_import_c)
         file_menu.addSeparator()
         act_save = QAction("Save MCMXQ…", self)
         act_save.setShortcut("Ctrl+S")
