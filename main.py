@@ -613,7 +613,12 @@ class MainWindow(QMainWindow):
             if isinstance(_w, QWidget):
                 _qt_layout.addWidget(_w)
             else:
-                _qt_layout.addLayout(_w)
+                # Bare QLayout (e.g. the button row from the .ui file) — wrap
+                # it in a QWidget so it gets a proper parent and stays visible.
+                _cw = QWidget()
+                _cw.setStyleSheet("QWidget { background:transparent; }")
+                _cw.setLayout(_w)
+                _qt_layout.addWidget(_cw)
 
         # Cost Estimator tab
         self._cost_estimator = CostEstimatorWidget()
