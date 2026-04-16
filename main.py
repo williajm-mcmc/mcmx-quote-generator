@@ -13,7 +13,7 @@ def _resource_path(relative):
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
     QWidget, QVBoxLayout, QDoubleSpinBox, QLabel, QHBoxLayout, QPushButton,
-    QTextEdit, QSizePolicy, QTabWidget,
+    QTextEdit, QSizePolicy, QTabWidget, QLineEdit,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
@@ -22,6 +22,7 @@ from PyQt6.uic import loadUi
 from form_widgets import DynamicFormWidget, DragDropLabel
 from doc_generator import generate_doc
 from cost_estimator import CostEstimatorWidget
+from otto_widget import OTTOWidget
 
 
 APP_STYLE = """
@@ -34,8 +35,9 @@ APP_STYLE = """
     /* ── Inputs ── */
     QLineEdit, QTextEdit {
         border: 1px solid #d6c0c5; border-radius: 5px;
-        padding: 6px 10px; font-family: 'Aptos'; font-size: 12px;
+        padding: 5px 10px; font-family: 'Aptos'; font-size: 12px;
         background: #ffffff; color: #1a0509;
+        min-height: 20px;
     }
     QLineEdit:focus, QTextEdit:focus { border-color: #920d2e; }
 
@@ -190,11 +192,105 @@ class PlainPasteTextEdit(QTextEdit):
 
     def insertFromMimeData(self, source):
         """Paste plain text only — strips all colour/font/size from clipboard."""
-        from PyQt6.QtCore import QMimeData
-        plain = QMimeData()
-        plain.setText(source.text())
-        super().insertFromMimeData(plain)
-        self._apply_default_fmt()
+        text = source.text()
+        if len(text) > 50_000:
+            text = text[:50_000]
+        # insertText respects setCurrentCharFormat, avoiding the whole-document
+        # reformat pass that causes a layout crash on very large pastes.
+        self.textCursor().insertText(text)
+
+
+class _ContactWidget(QWidget):
+    """
+    Drop-in replacement for textEdit_contact.
+    Presents four fields (Presented By name/email + Account Manager name/email)
+    and exposes toPlainText() / setPlainText() to remain API-compatible with
+    the rest of MainWindow.
+    """
+    _TITLE_STYLE = "font-size:11px; font-weight:600; color:#3a3a5c; margin-bottom:2px;"
+    _FIELD_STYLE = (
+        "QLineEdit { background:#ffffff; border:1px solid #d0d4de;"
+        "  border-radius:4px; padding:5px 8px; font-size:11px; color:#1a1a2e;"
+        "  min-height:20px; }"
+        "QLineEdit:focus { border-color:#7b8cde; }"
+    )
+    _COMPANY = "McNaughton-McKay Electric Co"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        # Presented by
+        lbl1 = QLabel("Presented by:")
+        lbl1.setStyleSheet(self._TITLE_STYLE)
+        layout.addWidget(lbl1)
+        self._pb_name  = QLineEdit(); self._pb_name.setPlaceholderText("Name")
+        self._pb_name.setStyleSheet(self._FIELD_STYLE)
+        self._pb_email = QLineEdit(); self._pb_email.setPlaceholderText("Email")
+        self._pb_email.setStyleSheet(self._FIELD_STYLE)
+        layout.addWidget(self._pb_name)
+        layout.addWidget(self._pb_email)
+
+        # Account Manager
+        lbl2 = QLabel("Account Manager:")
+        lbl2.setStyleSheet(self._TITLE_STYLE)
+        layout.addWidget(lbl2)
+        self._am_name  = QLineEdit(); self._am_name.setPlaceholderText("Name")
+        self._am_name.setStyleSheet(self._FIELD_STYLE)
+        self._am_email = QLineEdit(); self._am_email.setPlaceholderText("Email")
+        self._am_email.setStyleSheet(self._FIELD_STYLE)
+        layout.addWidget(self._am_name)
+        layout.addWidget(self._am_email)
+
+        # Prevent the panel from squishing below the height needed to show
+        # all four fields plus the two section labels.
+        self.setMinimumHeight(180)
+
+    # ── Public API (compatible with QTextEdit / PlainPasteTextEdit) ────────────
+
+    def toPlainText(self) -> str:
+        """Build the formatted contact block used in the Word template."""
+        pb_name  = self._pb_name.text().strip()  or "INSERTNAME"
+        pb_email = self._pb_email.text().strip()  or "INSERTEMAIL"
+        am_name  = self._am_name.text().strip()   or "INSERTNAME"
+        am_email = self._am_email.text().strip()  or "INSERTEMAIL"
+        return (
+            f"{pb_name}\n"
+            f"Solutions Architect, {self._COMPANY}\n"
+            f"{pb_email}\n"
+            f"\n"
+            f"{am_name}\n"
+            f"Account Manager, {self._COMPANY}\n"
+            f"{am_email}"
+        )
+
+    def setPlainText(self, text: str):
+        """Parse the stored formatted block back into the four fields."""
+        lines = (text or "").splitlines()
+        # Expected format: pb_name, pb_title, pb_email, blank, am_name, am_title, am_email
+        # Be tolerant of missing lines.
+        def _get(idx):
+            return lines[idx].strip() if idx < len(lines) else ""
+
+        pb_name  = _get(0)
+        pb_email = _get(2)
+        am_name  = _get(4)
+        am_email = _get(6)
+
+        # Strip sentinel placeholders so fields show empty / placeholder text
+        def _clean(v):
+            return "" if v in ("INSERTNAME", "INSERTEMAIL") else v
+
+        self._pb_name.setText(_clean(pb_name))
+        self._pb_email.setText(_clean(pb_email))
+        self._am_name.setText(_clean(am_name))
+        self._am_email.setText(_clean(am_email))
+
+    def setPlaceholderText(self, _text: str):
+        """No-op — keeps API compatibility when called generically."""
+        pass
 
 
 class MainWindow(QMainWindow):
@@ -203,9 +299,10 @@ class MainWindow(QMainWindow):
         ui_path = _resource_path("mainwindow.ui")
         loadUi(ui_path, self)
         self.setStyleSheet(APP_STYLE)
+        self.setMinimumSize(700, 480)  # allow vertical resizing on small screens
 
         # ── App version label (bottom-right) ──────────────────────────
-        _ver_lbl = QLabel("V1.1")
+        _ver_lbl = QLabel("V2.0")
         _ver_lbl.setStyleSheet(
             "QLabel { color:#b0a0a4; font-size:10px; padding:0 6px 2px 0; }")
         self.statusBar().addPermanentWidget(_ver_lbl)
@@ -226,20 +323,52 @@ class MainWindow(QMainWindow):
             "QMenu::item { padding:6px 20px; }"
             "QMenu::item:selected { background:#f5d0da; color:#920d2e; }")
         file_menu = menubar.addMenu("File")
-        act_import = QAction("Import MCMXQ…", self)
-        act_import.setShortcut("Ctrl+O")
-        act_import.triggered.connect(self.load_project)
-        file_menu.addAction(act_import)
-        act_import_c = QAction("Import MCMXC…", self)
-        act_import_c.triggered.connect(
-            lambda: self._cost_estimator.import_cost_sheet())
-        file_menu.addAction(act_import_c)
+
+        # ── Quote Generator ──────────────────────────────────────────────
+        _mq = file_menu.addMenu("Quote Generator (.mcmxq)")
+        _a = QAction("💾  Save .mcmxq", self); _a.setShortcut("Ctrl+S")
+        _a.triggered.connect(self.save_project); _mq.addAction(_a)
+        _a = QAction("⬆  Load .mcmxq", self); _a.setShortcut("Ctrl+O")
+        _a.triggered.connect(self.load_project); _mq.addAction(_a)
+
         file_menu.addSeparator()
-        act_save = QAction("Save MCMXQ…", self)
-        act_save.setShortcut("Ctrl+S")
-        act_save.triggered.connect(self.save_project)
-        file_menu.addAction(act_save)
+
+        # ── Cost Estimator ───────────────────────────────────────────────
+        _mc = file_menu.addMenu("Cost Estimator (.mcmxc)")
+        _a = QAction("💾  Save .mcmxc", self)
+        _a.triggered.connect(lambda: self._cost_estimator.save_data()); _mc.addAction(_a)
+        _a = QAction("⬆  Load .mcmxc", self)
+        _a.triggered.connect(lambda: self._cost_estimator.import_cost_sheet()); _mc.addAction(_a)
+
         file_menu.addSeparator()
+
+        # ── IBE Estimator ────────────────────────────────────────────────
+        _mi = file_menu.addMenu("IBE Estimator (.mcmxi)")
+        _a = QAction("💾  Save .mcmxi", self)
+        _a.triggered.connect(lambda: self._ibe.save_data()); _mi.addAction(_a)
+        _a = QAction("⬆  Load .mcmxi", self)
+        _a.triggered.connect(lambda: self._ibe.load_data()); _mi.addAction(_a)
+
+        file_menu.addSeparator()
+
+        # ── Thermal Imaging ──────────────────────────────────────────────
+        _mt = file_menu.addMenu("Thermal Imaging (.mcmxt)")
+        _a = QAction("💾  Save .mcmxt", self)
+        _a.triggered.connect(lambda: self._thermal.save_data()); _mt.addAction(_a)
+        _a = QAction("⬆  Load .mcmxt", self)
+        _a.triggered.connect(lambda: self._thermal.load_data()); _mt.addAction(_a)
+
+        file_menu.addSeparator()
+
+        # ── OTTO Generator ───────────────────────────────────────────────
+        _mo = file_menu.addMenu("OTTO Generator (.mcmxo)")
+        _a = QAction("💾  Save .mcmxo", self)
+        _a.triggered.connect(lambda: self._otto.save_project()); _mo.addAction(_a)
+        _a = QAction("⬆  Load .mcmxo", self)
+        _a.triggered.connect(lambda: self._otto.load_project()); _mo.addAction(_a)
+
+        file_menu.addSeparator()
+
         act_quit = QAction("Quit", self)
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
@@ -268,6 +397,7 @@ class MainWindow(QMainWindow):
                     Qt.TransformationMode.SmoothTransformation))
             _hbl.addWidget(_logo_lbl)
         _title = self.label_app_title
+        _title.setText("McNaughton-McKay Proposal Creator")
         _title.setStyleSheet(
             'font-size:20px; font-weight:800; color:#920d2e; padding-bottom:2px;')
         _title.setParent(None)
@@ -277,14 +407,10 @@ class MainWindow(QMainWindow):
         self.scrollAreaWidgetContents.layout().setContentsMargins(12, 12, 12, 12)
         self.scrollAreaWidgetContents.layout().setSpacing(12)
 
-        # Replace plain textEdit_contact with PlainPasteTextEdit
-        # Uses replaceWidget — same pattern as the picture label replacement
+        # Replace plain textEdit_contact with _ContactWidget (structured name/email fields)
         old_contact = self.textEdit_contact
-        self.textEdit_contact = PlainPasteTextEdit()
+        self.textEdit_contact = _ContactWidget()
         self.textEdit_contact.setObjectName('textEdit_contact')
-        self.textEdit_contact.setMinimumSize(old_contact.minimumSize())
-        self.textEdit_contact.setMaximumSize(old_contact.maximumSize())
-        self.textEdit_contact.setPlaceholderText(old_contact.placeholderText())
         self.formLayout_top.replaceWidget(old_contact, self.textEdit_contact)
         old_contact.hide()
         old_contact.deleteLater()
@@ -293,7 +419,7 @@ class MainWindow(QMainWindow):
 
         # ── Global margin spinner (injected into top panel) ────────────────
         # Global margin — +/- button control matching BOM section style
-        self._global_margin_value = 20.0
+        self._global_margin_value = 25.0
 
         # Hidden QDoubleSpinBox kept as compatibility shim for signal wiring
         self._global_margin_spin = QDoubleSpinBox()
@@ -410,7 +536,8 @@ class MainWindow(QMainWindow):
             def _inc(self_):        self_.setValue(self_._val + 1); self_._cb()
             def _dec(self_):        self_.setValue(self_._val - 1); self_._cb()
 
-        ver_row = QWidget()
+        self._ver_row = QWidget()
+        ver_row = self._ver_row
         ver_row.setFixedHeight(44)
         ver_row.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         ver_layout = QHBoxLayout(ver_row)
@@ -446,7 +573,8 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QListWidget as _QLW
 
         self._history_collapsed = True
-        _hist_outer = QWidget()
+        self._hist_outer = QWidget()
+        _hist_outer = self._hist_outer
         _hist_vbox = QVBoxLayout(_hist_outer)
         _hist_vbox.setContentsMargins(0, 0, 0, 0)
         _hist_vbox.setSpacing(4)
@@ -468,6 +596,7 @@ class MainWindow(QMainWindow):
         _hp_vbox.setSpacing(4)
 
         self._version_history = _QLW()
+        self._version_history.setMinimumHeight(80)
         self._version_history.setMaximumHeight(130)
         self._version_history.setStyleSheet(
             "QListWidget { background:#ffffff; border:1px solid #d6c0c5;"
@@ -590,40 +719,155 @@ class MainWindow(QMainWindow):
         self._top_collapsed = False
 
         # ── Tab wrapper ─────────────────────────────────────────────────────
-        # Move everything below the header bar into a "Quote Generator" tab
-        # and add a "Cost Estimator" tab alongside it.
+        # KEY: never use setParent(None) — it sets WA_WState_Hidden=True on
+        # the widget, which Qt's showChildren() then skips permanently.
+        # Instead: addWidget() reparents directly, then show() clears the flag.
         _main_layout = self.centralwidget.layout()
 
-        # Collect all items from index 1 onwards (everything after _header_bar)
-        _tab_items = []
-        while _main_layout.count() > 1:
-            _item = _main_layout.takeAt(1)
-            if _item.widget():
-                _tab_items.append(_item.widget())
-            elif _item.layout():
-                _tab_items.append(_item.layout())
-
-        # Quote tab container
         _quote_tab = QWidget()
-        _quote_tab.setStyleSheet("QWidget { background:transparent; }")
         _qt_layout = QVBoxLayout(_quote_tab)
-        _qt_layout.setContentsMargins(0, 8, 0, 0)
-        _qt_layout.setSpacing(10)
-        for _w in _tab_items:
-            if isinstance(_w, QWidget):
-                _qt_layout.addWidget(_w)
-            else:
-                # Bare QLayout (e.g. the button row from the .ui file) — wrap
-                # it in a QWidget so it gets a proper parent and stays visible.
-                _cw = QWidget()
-                _cw.setStyleSheet("QWidget { background:transparent; }")
-                _cw.setLayout(_w)
-                _qt_layout.addWidget(_cw)
+        _qt_layout.setContentsMargins(0, 0, 0, 0)
+        _qt_layout.setSpacing(0)
 
-        # Cost Estimator tab
+        # ── Outer scroll area ──────────────────────────────────────────────
+        # All non-button content lives here. When the window is too small the
+        # outer scrollbar appears instead of squishing the project-info fields.
+        from PyQt6.QtWidgets import QScrollArea as _QSA, QFrame as _QFr
+        _outer_scroll = _QSA()
+        _outer_scroll.setWidgetResizable(True)
+        _outer_scroll.setFrameShape(_QFr.Shape.NoFrame)
+        _outer_scroll.setStyleSheet(
+            "QScrollArea { background:transparent; border:none; }"
+            "QScrollArea > QWidget > QWidget { background:transparent; }")
+
+        _scroll_content = QWidget()
+        _scroll_layout = QVBoxLayout(_scroll_content)
+        _scroll_layout.setContentsMargins(0, 8, 0, 8)
+        _scroll_layout.setSpacing(10)
+
+        # Reparent each content widget into the scroll content, then
+        # call show() to clear any WA_WState_Hidden flag Qt may have set.
+        for _w in (self.button_collapse_top, self.widget_top_panel,
+                   self._margin_row_widget, self._ver_row, self._hist_outer):
+            _scroll_layout.addWidget(_w)
+            _w.show()
+
+        # Discard the UI heading label (not needed)
+        self.label_sections_heading.setParent(None)
+
+        # BOM sections: fixed minimum so the content area is always usable;
+        # its own scroll handles overflow within that height.
+        self.scrollArea_sections.setMinimumHeight(180)
+        _scroll_layout.addWidget(self.scrollArea_sections, 1)
+        self.scrollArea_sections.show()
+
+        _outer_scroll.setWidget(_scroll_content)
+        _qt_layout.addWidget(_outer_scroll, 1)
+
+        # Button row — read text before hiding old buttons
+        _old_para_text = self.button_add_paragraph.text()
+        _old_tbl_text  = self.button_add_table.text()
+        _old_gen_text  = self.button_generate_doc.text()
+        self.button_add_paragraph.hide()
+        self.button_add_table.hide()
+        self.button_generate_doc.hide()
+
+        _btn_row = QWidget()
+        _btn_row.setStyleSheet("QWidget { background:#f9f0f2; border-top:1px solid #d6c0c5; }")
+        _btn_row.setFixedHeight(52)
+        _btn_hl = QHBoxLayout(_btn_row)
+        _btn_hl.setContentsMargins(16, 8, 16, 8)
+        _btn_hl.setSpacing(8)
+
+        _load_q = QPushButton("⬆  Import .mcmxq")
+        _load_q.setStyleSheet(
+            "QPushButton { background:#ffffff; color:#920d2e;"
+            "  border:1px solid #d6c0c5; border-radius:5px;"
+            "  padding:7px 18px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#fdf0f3; border-color:#920d2e; }"
+        )
+        _load_q.clicked.connect(self.load_project)
+        _new_para = QPushButton(_old_para_text)
+        _new_para.setObjectName("button_add_paragraph")
+        _new_para.setMinimumSize(130, 34)
+        _new_para.setStyleSheet(
+            "QPushButton { background:#ffffff; color:#3a3a5c;"
+            "  border:1px solid #d6c0c5; border-radius:5px;"
+            "  padding:7px 14px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#f4f6fa; }"
+        )
+        _new_para.clicked.connect(self._add_paragraph)
+
+        _new_tbl = QPushButton(_old_tbl_text)
+        _new_tbl.setObjectName("button_add_table")
+        _new_tbl.setMinimumSize(130, 34)
+        _new_tbl.setStyleSheet(
+            "QPushButton { background:#ffffff; color:#3a3a5c;"
+            "  border:1px solid #d6c0c5; border-radius:5px;"
+            "  padding:7px 14px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#f4f6fa; }"
+        )
+        _new_tbl.clicked.connect(self._add_table)
+
+        _btn_hl.addWidget(_new_para)
+        _btn_hl.addWidget(_new_tbl)
+        _btn_hl.addStretch()
+        _btn_hl.addWidget(_load_q)
+
+        _save_q = QPushButton("💾  Save .mcmxq")
+        _save_q.setStyleSheet(
+            "QPushButton { background:#ffffff; color:#3a3a5c;"
+            "  border:1px solid #d6c0c5; border-radius:5px;"
+            "  padding:7px 18px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#f4f6fa; }"
+        )
+        _save_q.clicked.connect(self.save_project)
+        _btn_hl.addWidget(_save_q)
+
+        _new_gen = QPushButton(_old_gen_text)
+        _new_gen.setObjectName("button_generate_doc")
+        _new_gen.setMinimumSize(200, 36)
+        _new_gen.setStyleSheet(
+            "QPushButton { background:#920d2e; color:#ffffff;"
+            "  border:none; border-radius:5px;"
+            "  padding:7px 22px; font-size:13px; font-weight:700; }"
+            "QPushButton:hover { background:#7a0b27; }"
+            "QPushButton:pressed { background:#600820; }"
+        )
+        _new_gen.clicked.connect(self.generate_document)
+        _btn_hl.addWidget(_new_gen)
+
+        _qt_layout.addWidget(_btn_row)
+        # show() clears WA_WState_Hidden on the row and its children
+        _new_para.show()
+        _new_tbl.show()
+        _new_gen.show()
+        _btn_row.show()
+        self.button_add_paragraph = _new_para
+        self.button_add_table     = _new_tbl
+        self.button_generate_doc  = _new_gen
+
+        # Clean remaining stray items from the main layout
+        while _main_layout.count() > 1:
+            item = _main_layout.takeAt(1)
+            if item.widget():
+                item.widget().setParent(None)
+
+        # ── Cost Estimator tab ───────────────────────────────────────────
         self._cost_estimator = CostEstimatorWidget()
 
-        # Tab widget
+        # ── IBE Estimator tab (standalone, full widget) ───────────────────
+        from ibe_widget import IBEWidget as _IBEWidget
+        self._ibe = _IBEWidget(compact=False)
+
+        # ── Thermal Imaging tab (standalone, full widget) ─────────────────
+        from thermal_widget import ThermalImagingWidget as _ThermalWidget
+        self._thermal = _ThermalWidget(compact=False)
+
+        # ── OTTO Generator tab ───────────────────────────────────────────
+        self._otto = OTTOWidget()
+
+        # ── Tab widget ───────────────────────────────────────────────────
         self._tabs = QTabWidget()
         self._tabs.setStyleSheet(
             "QTabWidget::pane { border:none; background:transparent; }"
@@ -632,13 +876,35 @@ class MainWindow(QMainWindow):
             "  border:1px solid #d6c0c5; border-bottom:none;"
             "  border-radius:5px 5px 0 0;"
             "  padding:6px 20px; font-size:12px; font-weight:600; }"
-            "QTabBar::tab:selected {"
-            "  background:#920d2e; color:#ffffff; }"
+            "QTabBar::tab:selected { background:#920d2e; color:#ffffff; }"
             "QTabBar::tab:hover:!selected { background:#fdf0f3; }"
         )
-        self._tabs.addTab(_quote_tab,              "Quote Generator")
-        self._tabs.addTab(self._cost_estimator,    "Cost Estimator")
+        self._tabs.addTab(_quote_tab,           "Quote Generator")
+        self._tabs.addTab(self._otto,           "OTTO Generator")
+        self._tabs.addTab(self._thermal,        "Thermal Imaging")
+        self._tabs.addTab(self._ibe,            "IBE Estimator")
+        self._tabs.addTab(self._cost_estimator, "Cost Estimator")
         _main_layout.addWidget(self._tabs)
+
+        # ── Quote Generator tab order ──────────────────────────────────────
+        # textEdit_contact is a _ContactWidget (QWidget containing four
+        # QLineEdit fields). setTabOrder chains into its first focusable child
+        # and Qt walks the remaining children by layout order automatically.
+        # Explicit order: project → proposal → customer → location → contact
+        # → upload button → clear button
+        QWidget.setTabOrder(self.lineEdit_project,  self.lineEdit_proposal)
+        QWidget.setTabOrder(self.lineEdit_proposal, self.lineEdit_customer)
+        QWidget.setTabOrder(self.lineEdit_customer, self.lineEdit_location)
+        QWidget.setTabOrder(self.lineEdit_location, self.textEdit_contact)
+        QWidget.setTabOrder(self.textEdit_contact,  self.button_upload_picture)
+        QWidget.setTabOrder(self.button_upload_picture, self.button_clear_picture)
+
+        # Lock widget_top_panel's minimum height to its natural size so it
+        # can never be squished. Deferred one event-loop tick so the layout
+        # has fully resolved before we read sizeHint().
+        from PyQt6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, lambda: self.widget_top_panel.setMinimumHeight(
+            max(280, self.widget_top_panel.sizeHint().height())))
 
     def _get_global_margin(self) -> float:
         return self._global_margin_value
@@ -792,6 +1058,9 @@ class MainWindow(QMainWindow):
             return
         state = self.form_widget.collect_project_state(self._collect_fields())
         state["cost_estimator"] = self._cost_estimator.get_data()
+        state["ibe"]            = self._ibe.get_data()
+        state["thermal"]        = self._thermal.get_data()
+        state["otto"]           = self._otto.get_data()
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(state, f, indent=2, ensure_ascii=False)
@@ -840,6 +1109,12 @@ class MainWindow(QMainWindow):
         self.form_widget.restore_project_state(state)
         if "cost_estimator" in state:
             self._cost_estimator.restore_data(state["cost_estimator"])
+        if "ibe" in state:
+            self._ibe.restore_data(state["ibe"])
+        if "thermal" in state:
+            self._thermal.restore_data(state["thermal"])
+        if "otto" in state:
+            self._otto.restore_data(state["otto"])
         _msg(self, "info", "Project Loaded", "✔  MCMXQ project restored.")
 
     def _refresh_toc(self):
@@ -857,31 +1132,33 @@ class MainWindow(QMainWindow):
                 top = QTreeWidgetItem([f"{num}.  {hdr}"])
                 top.setForeground(0, _QC('#920d2e'))
                 top.setFont(0, _bold_aptos)
-                # Sub-headers: scan QTextDocument blocks directly for
-                # 16pt bold dark-red text (more reliable than HTML regex)
+                # Sub-headers: scan QTextDocument blocks.
+                # A block is treated as a heading if ANY fragment within it
+                # carries the exact heading colour (#9E1B32) and Bold weight.
+                # Using block.text() avoids false ordering caused by split fragments.
+                from PyQt6.QtGui import QFont as _QFont
                 doc = section.rich_editor.editor.document()
                 subs = []
                 block = doc.begin()
                 while block.isValid():
+                    block_is_hdr = False
                     it = block.begin()
                     while not it.atEnd():
                         frag = it.fragment()
                         if frag.isValid():
-                            cf = frag.charFormat()
+                            cf  = frag.charFormat()
                             col = cf.foreground().color()
-                            # Detect header: dark-red foreground color
-                            # #9E1B32 → r=139, g=0, b=0
-                            # #9E1B32 = r=158, g=27, b=50
-                            is_hdr = (
-                                col.red() >= 140 and
-                                col.green() >= 20 and col.green() <= 40 and
-                                col.blue() >= 40 and col.blue() <= 65 and
-                                col.red() > col.blue() + 80)
-                            if is_hdr:
-                                txt = frag.text().strip()
-                                if txt and txt not in subs:
-                                    subs.append(txt)
+                            if (abs(col.red()   - 0x9E) <= 3 and
+                                abs(col.green() - 0x1B) <= 3 and
+                                abs(col.blue()  - 0x32) <= 3 and
+                                cf.fontWeight() >= _QFont.Weight.Bold):
+                                block_is_hdr = True
+                                break
                         it += 1
+                    if block_is_hdr:
+                        txt = block.text().strip()
+                        if txt and txt not in subs:
+                            subs.append(txt)
                     block = block.next()
                 for sub_i, sub in enumerate(subs, 1):
                     child = QTreeWidgetItem([f"{num}.{sub_i}  {sub}"])
@@ -933,10 +1210,16 @@ class MainWindow(QMainWindow):
             try:
                 _state = self.form_widget.collect_project_state(self._collect_fields())
                 _state["cost_estimator"] = self._cost_estimator.get_data()
+                _state["ibe"]            = self._ibe.get_data()
+                _state["thermal"]        = self._thermal.get_data()
+                _state["otto"]           = self._otto.get_data()
                 with open(_mcmxq_path, 'w', encoding='utf-8') as _mf:
                     json.dump(_state, _mf, indent=2, ensure_ascii=False)
             except Exception as _me:
-                print(f'MCMXQ auto-save failed: {_me}')
+                import traceback as _tb
+                _msg(self, "warn", "Project Auto-Save Failed",
+                     f"The document was generated but the .mcmxq could not be saved:\n\n"
+                     f"{_me}\n\nUse File → Save MCMXQ to save manually.")
             _msg(self, "info", "Document Generated",
                  f"✔  Saved successfully:\n{result}\n\nProject file:\n{_mcmxq_path}")
         except Exception as e:
@@ -967,7 +1250,7 @@ if __name__ == "__main__":
     _icon = QIcon(_resource_path('logo.png'))
     app.setWindowIcon(_icon)
     window = MainWindow()
-    window.setWindowTitle("Quote Generator")
+    window.setWindowTitle("McNaughton-McKay Proposal Creator")
     window.setWindowIcon(_icon)
     window.show()
     sys.exit(app.exec())

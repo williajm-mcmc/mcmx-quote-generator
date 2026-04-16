@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QLabel,
     QHeaderView, QSizePolicy, QGraphicsDropShadowEffect, QStyledItemDelegate,
     QDialog, QSpinBox, QDialogButtonBox, QFormLayout, QScrollArea,
-    QDoubleSpinBox, QCheckBox, QToolBar, QFrame
+    QDoubleSpinBox, QCheckBox, QToolBar, QFrame, QInputDialog
 )
 from PyQt6.QtCore import Qt, QSize, QUrl, QRegularExpression
 from PyQt6.QtGui import (
@@ -136,6 +136,20 @@ class PlainTextDelegate(QStyledItemDelegate):
 
 class RichTextDelegate(QStyledItemDelegate):
     """Delegate that renders stored HTML (UserRole) in the cell instead of plain text."""
+    def createEditor(self, parent, option, index):
+        e = QLineEdit(parent)
+        e.setStyleSheet(EDITOR_STYLE)
+        return e
+
+    def setEditorData(self, editor, index):
+        editor.setText(index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+    def setModelData(self, editor, model, index):
+        plain = editor.text().strip()
+        model.setData(index, plain, Qt.ItemDataRole.DisplayRole)
+        # Clear stored HTML so the cell renders as plain text after direct edit
+        model.setData(index, None, Qt.ItemDataRole.UserRole)
+
     def paint(self, painter, option, index):
         html = index.data(Qt.ItemDataRole.UserRole)
         if not html:
@@ -1075,39 +1089,45 @@ class _RichTextEditInternal(QTextEdit):
         Walk every character from start_pos to the current cursor end
         and reset font to Aptos 11pt black, preserving bold/italic/bullets.
         """
-        doc   = self.document()
-        end   = self.textCursor().position()
-        if end <= start_pos:
-            return
-        r, g, b = self._PASTE_COLOR
-        body_fmt = QTextCharFormat()
-        body_fmt.setFontFamily(self._PASTE_FAMILY)
-        body_fmt.setFontPointSize(self._PASTE_SIZE)
-        body_fmt.setForeground(QColor(r, g, b))
-        # Walk block by block — faster than char-by-char and safe
-        block = doc.findBlock(start_pos)
-        while block.isValid() and block.position() <= end:
-            it = block.begin()
-            while not it.atEnd():
-                frag = it.fragment()
-                if frag.isValid():
-                    frag_start = frag.position()
-                    frag_end   = frag_start + frag.length()
-                    # Only touch fragments within our pasted range
-                    if frag_end > start_pos and frag_start < end:
-                        old_fmt = frag.charFormat()
-                        new_fmt = QTextCharFormat(old_fmt)
-                        new_fmt.setFontFamily(self._PASTE_FAMILY)
-                        new_fmt.setFontPointSize(self._PASTE_SIZE)
-                        new_fmt.setForeground(QColor(r, g, b))
-                        # Apply
-                        c = QTextCursor(doc)
-                        c.setPosition(max(start_pos, frag_start))
-                        c.setPosition(min(end, frag_end),
-                                      QTextCursor.MoveMode.KeepAnchor)
-                        c.mergeCharFormat(new_fmt)
-                it += 1
-            block = block.next()
+        try:
+            doc = self.document()
+            end = self.textCursor().position()
+            if end <= start_pos:
+                return
+            r, g, b = self._PASTE_COLOR
+            body_fmt = QTextCharFormat()
+            body_fmt.setFontFamily(self._PASTE_FAMILY)
+            body_fmt.setFontPointSize(self._PASTE_SIZE)
+            body_fmt.setForeground(QColor(r, g, b))
+            block = doc.findBlock(start_pos)
+            while block.isValid() and block.position() <= end:
+                try:
+                    it = block.begin()
+                    while not it.atEnd():
+                        try:
+                            frag = it.fragment()
+                            if frag.isValid():
+                                frag_start = frag.position()
+                                frag_end   = frag_start + frag.length()
+                                if frag_end > start_pos and frag_start < end:
+                                    old_fmt = frag.charFormat()
+                                    new_fmt = QTextCharFormat(old_fmt)
+                                    new_fmt.setFontFamily(self._PASTE_FAMILY)
+                                    new_fmt.setFontPointSize(self._PASTE_SIZE)
+                                    new_fmt.setForeground(QColor(r, g, b))
+                                    c = QTextCursor(doc)
+                                    c.setPosition(max(start_pos, frag_start))
+                                    c.setPosition(min(end, frag_end),
+                                                  QTextCursor.MoveMode.KeepAnchor)
+                                    c.mergeCharFormat(new_fmt)
+                        except Exception:
+                            pass
+                        it += 1
+                except Exception:
+                    pass
+                block = block.next()
+        except Exception:
+            pass
 
     def canInsertFromMimeData(self, source):
         if source.hasHtml() and '<table' in source.html().lower():
@@ -1115,17 +1135,14 @@ class _RichTextEditInternal(QTextEdit):
         return super().canInsertFromMimeData(source)
 
     def insertFromMimeData(self, source):
-        start = self.textCursor().position()
-        if source.hasHtml():
-            html = source.html()
-            if '<table' in html.lower():
-                cursor = self.textCursor()
-                if _parse_html_table_to_qt(html, cursor, self):
-                    self._normalise_pasted(start)
-                    return   # successfully inserted as QTextTable
-        # Fall through to default paste for everything else
-        super().insertFromMimeData(source)
-        self._normalise_pasted(start)
+        # Always paste as plain text — formatting is applied when the Word doc
+        # is generated, so there is no need to preserve rich formatting in the GUI.
+        try:
+            plain = source.text() if source.hasText() else ""
+            if plain:
+                self.textCursor().insertText(plain)
+        except Exception:
+            pass
 
     def keyPressEvent(self, event):
         key  = event.key()
@@ -2230,13 +2247,26 @@ class TableSection(CollapsibleCard):
             "padding:4px 8px; }")
         self._body_layout.addWidget(self._grand_total_lbl)
 
-        # Buttons
+        # Buttons — single row: generic add/remove + pre-filled MCM service rows
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         add_btn = QPushButton("＋  Add Row"); add_btn.setStyleSheet(ACTION_BTN_STYLE)
         add_btn.clicked.connect(self.add_row)
         del_btn = QPushButton("－  Remove Selected"); del_btn.setStyleSheet(ACTION_BTN_STYLE)
         del_btn.clicked.connect(self._remove_selected_rows)
+        eng_btn = QPushButton("⚙  Add Engineering Service")
+        eng_btn.setStyleSheet(ACTION_BTN_STYLE)
+        eng_btn.setToolTip("Add MCMX-SERVICES-AFSE row — enter hours")
+        eng_btn.clicked.connect(self._add_engineering_service)
+        trav_btn = QPushButton("🚗  Add Travel")
+        trav_btn.setStyleSheet(ACTION_BTN_STYLE)
+        trav_btn.setToolTip("Add MCMX-SERVICES-TRAVEL row — enter travel hours")
+        trav_btn.clicked.connect(self._add_travel_row)
+        exp_btn = QPushButton("📋  Add Expenses")
+        exp_btn.setStyleSheet(ACTION_BTN_STYLE)
+        exp_btn.setToolTip("Add MCMX-SERVICES-EXPENSES row — enter mileage, meals, and hotel")
+        exp_btn.clicked.connect(self._add_expenses_row)
         btn_row.addWidget(add_btn); btn_row.addWidget(del_btn)
+        btn_row.addWidget(eng_btn); btn_row.addWidget(trav_btn); btn_row.addWidget(exp_btn)
         btn_row.addStretch()
         self._body_layout.addLayout(btn_row)
         # Track hours state per row
@@ -2409,6 +2439,324 @@ class TableSection(CollapsibleCard):
             self._hours_rows.discard(row)
         self._safe_update_totals(row, self._COL_QTY)
 
+    # ── Pre-filled MCM service row helpers ────────────────────────────────────
+
+    def _add_prefilled_row(self, plain_text: str, html: str,
+                           qty, cost: float, is_hours: bool = True,
+                           margin: float = None):
+        """Add one pre-configured row and populate all cells."""
+        self.add_row()
+        row = self.table.rowCount() - 1
+
+        # Override margin if requested (e.g. 0.0 for pass-through service rows)
+        if margin is not None:
+            self.table.blockSignals(True)
+            m_item = self.table.item(row, self._COL_MARGIN)
+            if m_item is None:
+                m_item = QTableWidgetItem()
+                self.table.setItem(row, self._COL_MARGIN, m_item)
+            # Always write an explicit value so _row_margin_pct reads 0, not global
+            m_item.setText(f"{margin:.1f}")
+            self.table.blockSignals(False)
+
+        # ── Part Number cell ──
+        part_item = self.table.item(row, self._COL_PART)
+        if part_item is None:
+            part_item = QTableWidgetItem()
+            part_item.setForeground(QColor("#1a1a2e"))
+            self.table.setItem(row, self._COL_PART, part_item)
+        self.table.blockSignals(True)
+        part_item.setText(plain_text)
+        self.table.blockSignals(False)
+        # Store rich HTML (rendered by delegate and used in doc export)
+        part_item.setData(Qt.ItemDataRole.UserRole, html)
+
+        # ── Qty ──
+        qty_item = self.table.item(row, self._COL_QTY)
+        if qty_item is None:
+            qty_item = QTableWidgetItem()
+            self.table.setItem(row, self._COL_QTY, qty_item)
+        self.table.blockSignals(True)
+        qty_item.setText(str(int(qty)) if qty == int(qty) else f"{qty:.1f}")
+        self.table.blockSignals(False)
+
+        # ── Cost ──
+        cost_item = self.table.item(row, self._COL_COST)
+        if cost_item is None:
+            cost_item = QTableWidgetItem()
+            self.table.setItem(row, self._COL_COST, cost_item)
+        self.table.blockSignals(True)
+        cost_item.setText(f"{cost:.2f}")
+        self.table.blockSignals(False)
+
+        # ── Hours? checkbox ──
+        if is_hours and row < len(self._hours_checkboxes):
+            self._hours_checkboxes[row].setChecked(True)
+            self._hours_rows.add(row)
+
+        # Refresh totals and row height
+        self._refresh_all_totals()
+        self.table.updateGeometry()
+        self.updateGeometry()
+
+    def _add_engineering_service(self):
+        """Custom dialog: on-site + off-site hours → MCMX-SERVICES-AFSE row at $225/hr."""
+        _FIELD_STYLE = (
+            "QDoubleSpinBox {"
+            "  background:#ffffff; border:1px solid #d0d4de;"
+            "  border-radius:4px; padding:3px 6px; font-size:11px; color:#1a1a2e; }"
+            "QDoubleSpinBox:focus { border-color:#7b8cde; }"
+        )
+        _LBL_SECTION = "font-size:11px; font-weight:600; color:#3a3a5c;"
+        _LBL_SUB     = "font-size:10px; color:#555577;"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Engineering Service")
+        dlg.setStyleSheet("QDialog { background:#ffffff; } QLabel { color:#1a1a2e; }")
+        dlg.setMinimumWidth(320)
+
+        outer = QVBoxLayout(dlg)
+        outer.setSpacing(8)
+        outer.setContentsMargins(16, 14, 16, 10)
+
+        lbl_hdr = QLabel("MCMX-SERVICES-AFSE — enter support hours")
+        lbl_hdr.setStyleSheet(_LBL_SECTION)
+        lbl_hdr.setWordWrap(True)
+        outer.addWidget(lbl_hdr)
+
+        form = QFormLayout(); form.setSpacing(6)
+        sp_onsite = QDoubleSpinBox(); sp_onsite.setRange(0, 99999); sp_onsite.setDecimals(1)
+        sp_onsite.setSuffix(" hr"); sp_onsite.setValue(4.0)
+        sp_onsite.setStyleSheet(_FIELD_STYLE); sp_onsite.setMinimumWidth(130)
+        sp_offsite = QDoubleSpinBox(); sp_offsite.setRange(0, 99999); sp_offsite.setDecimals(1)
+        sp_offsite.setSuffix(" hr"); sp_offsite.setValue(0.0)
+        sp_offsite.setStyleSheet(_FIELD_STYLE); sp_offsite.setMinimumWidth(130)
+
+        lbl_on  = QLabel("On-site hours:");  lbl_on.setStyleSheet(_LBL_SUB)
+        lbl_off = QLabel("Off-site hours:"); lbl_off.setStyleSheet(_LBL_SUB)
+        form.addRow(lbl_on,  sp_onsite)
+        form.addRow(lbl_off, sp_offsite)
+        outer.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.setStyleSheet(
+            "QPushButton { background:#f4f6fa; color:#3a3a5c;"
+            "  border:1px solid #dde1e7; border-radius:4px; padding:5px 16px; font-size:11px; }"
+            "QPushButton:hover { background:#eaecf4; }"
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        outer.addWidget(btns)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        onsite  = sp_onsite.value()
+        offsite = sp_offsite.value()
+        total   = onsite + offsite
+
+        def _fmt_hrs(h):
+            return f"{int(h)} Hours" if h == int(h) else f"{h:.1f} Hours"
+
+        # ── Build bullet lines (only non-zero values shown) ──────────────────
+        plain_bullets = []
+        html_bullets  = ""
+        _s = "font-size:9pt; line-height:1; margin:0"
+        if onsite > 0:
+            plain_bullets.append(f"\u2022 {_fmt_hrs(onsite)} of On-Site Support")
+            html_bullets += f"<li style='{_s}'>{_fmt_hrs(onsite)} of On-Site Support</li>"
+        if offsite > 0:
+            plain_bullets.append(f"\u2022 {_fmt_hrs(offsite)} of Off-Site Support")
+            html_bullets += f"<li style='{_s}'>{_fmt_hrs(offsite)} of Off-Site Support</li>"
+        html_bullets += f"<li style='{_s}'>Standard Hourly Rate (M-F, 8-5)</li>"
+        plain_bullets.append("\u2022 Standard Hourly Rate (M-F, 8-5)")
+
+        plain = (
+            "MCMX-SERVICES-AFSE\n"
+            "Hourly Support \u2013 Automation Field Service Engineer\n"
+            + "\n".join(plain_bullets) + "\n\n"
+            "Rates:\n"
+            "Standard Hourly Rate \u2013 $225.00/hr (M-F, 8-5)\n"
+            "Overtime Hourly Rate \u2013 $337.50/hr\n"
+            "Sunday/Holiday Hourly Rate \u2013 $450.00/hr"
+        )
+        html = (
+            "<p style='margin:0; line-height:1'><b>MCMX-SERVICES-AFSE</b></p>"
+            f"<p style='{_s}'>Hourly Support \u2013 Automation Field Service Engineer</p>"
+            f"<ul style='{_s}; padding-left:16px'>{html_bullets}</ul>"
+            "<p style='margin:2px 0 0 0; line-height:1'><b>Rates:</b></p>"
+            f"<p style='{_s}'>Standard Hourly Rate \u2013 $225.00/hr&nbsp;&nbsp;(M-F, 8-5)</p>"
+            f"<p style='{_s}'>Overtime Hourly Rate \u2013 $337.50/hr</p>"
+            f"<p style='{_s}'>Sunday/Holiday Hourly Rate \u2013 $450.00/hr</p>"
+        )
+        self._add_prefilled_row(plain, html, total, 225.0, is_hours=True, margin=0.0)
+
+    def _add_travel_row(self):
+        """Prompt for travel time then insert a pre-filled MCMX-SERVICES-TRAVEL row at $175/hr."""
+        hours, ok = QInputDialog.getDouble(
+            self, "Travel \u2014 Hours",
+            "Enter total drive time (hours):", 1.0, 0.0, 99999.0, 2)
+        if not ok:
+            return
+
+        # Display as "X hr Y min" if fractional, else "X hours"
+        total_min = round(hours * 60)
+        h_part, m_part = divmod(total_min, 60)
+        if h_part == 0:
+            time_str = f"{total_min} minutes"
+        elif m_part == 0:
+            time_str = f"{h_part} hour{'s' if h_part != 1 else ''}"
+        else:
+            time_str = f"{h_part} hr {m_part} min"
+
+        plain = (
+            "MCMX-SERVICES-TRAVEL\n"
+            "Includes:\n"
+            f"\u2022 Drive Time ({time_str} total)"
+        )
+        _s = "font-size:9pt; line-height:1; margin:0"
+        html = (
+            "<p style='margin:0; line-height:1'><b>MCMX-SERVICES-TRAVEL</b></p>"
+            f"<p style='{_s}'>Includes:</p>"
+            f"<ul style='{_s}; padding-left:16px'>"
+            f"<li style='{_s}'>Drive Time ({time_str} total)</li>"
+            "</ul>"
+        )
+        self._add_prefilled_row(plain, html, hours, 175.0, is_hours=True, margin=0.0)
+
+    def _add_expenses_row(self):
+        """Custom dialog to collect mileage, meals, and hotel, then insert MCMX-SERVICES-EXPENSES."""
+        _FIELD_STYLE = (
+            "QDoubleSpinBox, QSpinBox {"
+            "  background:#ffffff; border:1px solid #d0d4de;"
+            "  border-radius:4px; padding:3px 6px; font-size:11px; color:#1a1a2e; }"
+            "QDoubleSpinBox:focus, QSpinBox:focus { border-color:#7b8cde; }"
+        )
+        _LBL_SECTION = "font-size:11px; font-weight:600; color:#3a3a5c; margin-top:6px;"
+        _LBL_SUB     = "font-size:10px; color:#555577;"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Expenses")
+        dlg.setStyleSheet("QDialog { background:#ffffff; } QLabel { color:#1a1a2e; }")
+        dlg.setMinimumWidth(340)
+
+        outer = QVBoxLayout(dlg)
+        outer.setSpacing(8)
+        outer.setContentsMargins(16, 14, 16, 10)
+
+        # ── Mileage ──────────────────────────────────────────────────────────
+        lbl_mile = QLabel("Mileage")
+        lbl_mile.setStyleSheet(_LBL_SECTION)
+        outer.addWidget(lbl_mile)
+
+        mile_form = QFormLayout(); mile_form.setSpacing(5)
+        sp_miles = QDoubleSpinBox(); sp_miles.setRange(0, 999999); sp_miles.setDecimals(0)
+        sp_miles.setSuffix(" mi"); sp_miles.setValue(0); sp_miles.setStyleSheet(_FIELD_STYLE)
+        sp_miles.setMinimumWidth(130)
+        sp_rate = QDoubleSpinBox(); sp_rate.setRange(0, 9999); sp_rate.setDecimals(3)
+        sp_rate.setPrefix("$"); sp_rate.setValue(0.720); sp_rate.setStyleSheet(_FIELD_STYLE)
+        sp_rate.setMinimumWidth(130)
+        lbl_r = QLabel("Rate per mile:"); lbl_r.setStyleSheet(_LBL_SUB)
+        lbl_m = QLabel("Miles:"); lbl_m.setStyleSheet(_LBL_SUB)
+        mile_form.addRow(lbl_m, sp_miles)
+        mile_form.addRow(lbl_r, sp_rate)
+        outer.addLayout(mile_form)
+
+        # ── Meals ─────────────────────────────────────────────────────────────
+        lbl_meal = QLabel("Meals")
+        lbl_meal.setStyleSheet(_LBL_SECTION)
+        outer.addWidget(lbl_meal)
+
+        meal_form = QFormLayout(); meal_form.setSpacing(5)
+        sp_meal_qty = QSpinBox(); sp_meal_qty.setRange(0, 9999)
+        sp_meal_qty.setSuffix(" meal(s)"); sp_meal_qty.setValue(0)
+        sp_meal_qty.setStyleSheet(_FIELD_STYLE); sp_meal_qty.setMinimumWidth(130)
+        sp_meal_cost = QDoubleSpinBox(); sp_meal_cost.setRange(0, 9999); sp_meal_cost.setDecimals(2)
+        sp_meal_cost.setPrefix("$"); sp_meal_cost.setValue(25.00)
+        sp_meal_cost.setStyleSheet(_FIELD_STYLE); sp_meal_cost.setMinimumWidth(130)
+        lbl_mq = QLabel("Quantity:"); lbl_mq.setStyleSheet(_LBL_SUB)
+        lbl_mc = QLabel("Cost per meal:"); lbl_mc.setStyleSheet(_LBL_SUB)
+        meal_form.addRow(lbl_mq, sp_meal_qty)
+        meal_form.addRow(lbl_mc, sp_meal_cost)
+        outer.addLayout(meal_form)
+
+        # ── Hotel ─────────────────────────────────────────────────────────────
+        lbl_hotel = QLabel("Hotel")
+        lbl_hotel.setStyleSheet(_LBL_SECTION)
+        outer.addWidget(lbl_hotel)
+
+        hotel_form = QFormLayout(); hotel_form.setSpacing(5)
+        sp_nights = QSpinBox(); sp_nights.setRange(0, 9999)
+        sp_nights.setSuffix(" night(s)"); sp_nights.setValue(0)
+        sp_nights.setStyleSheet(_FIELD_STYLE); sp_nights.setMinimumWidth(130)
+        sp_hotel_cost = QDoubleSpinBox(); sp_hotel_cost.setRange(0, 9999); sp_hotel_cost.setDecimals(2)
+        sp_hotel_cost.setPrefix("$"); sp_hotel_cost.setValue(150.00)
+        sp_hotel_cost.setStyleSheet(_FIELD_STYLE); sp_hotel_cost.setMinimumWidth(130)
+        lbl_hn = QLabel("Nights:"); lbl_hn.setStyleSheet(_LBL_SUB)
+        lbl_hc = QLabel("Cost per night:"); lbl_hc.setStyleSheet(_LBL_SUB)
+        hotel_form.addRow(lbl_hn, sp_nights)
+        hotel_form.addRow(lbl_hc, sp_hotel_cost)
+        outer.addLayout(hotel_form)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.setStyleSheet(
+            "QPushButton { background:#f4f6fa; color:#3a3a5c;"
+            "  border:1px solid #dde1e7; border-radius:4px; padding:5px 16px; font-size:11px; }"
+            "QPushButton:hover { background:#eaecf4; }"
+            "QPushButton[text='OK'] { background:#3a3a5c; color:#ffffff; border-color:#3a3a5c; }"
+            "QPushButton[text='OK']:hover { background:#2a2a4c; }"
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        outer.addWidget(btns)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # ── Collect values ────────────────────────────────────────────────────
+        miles      = sp_miles.value()
+        mile_rate  = sp_rate.value()
+        meal_qty   = sp_meal_qty.value()
+        meal_cost  = sp_meal_cost.value()
+        nights     = sp_nights.value()
+        hotel_cost = sp_hotel_cost.value()
+
+        mile_total  = miles * mile_rate
+        meal_total  = meal_qty * meal_cost
+        hotel_total = nights * hotel_cost
+        grand_total = mile_total + meal_total + hotel_total
+
+        # ── Build BOM cell content (no pricing shown — just what's included) ──
+        _s = "font-size:9pt; line-height:1; margin:0"
+
+        plain_lines = ["MCMX-SERVICES-EXPENSES", "Includes:"]
+        bullets = ""
+        if miles > 0:
+            mi_str = f"{int(miles)} mi"
+            plain_lines.append(f"\u2022 Mileage: {mi_str}")
+            bullets += f"<li style='{_s}'>Mileage: {mi_str}</li>"
+        if meal_qty > 0:
+            meal_str = f"{meal_qty} meal{'s' if meal_qty != 1 else ''}"
+            plain_lines.append(f"\u2022 Meals: {meal_str}")
+            bullets += f"<li style='{_s}'>Meals: {meal_str}</li>"
+        if nights > 0:
+            hotel_str = f"{nights} night{'s' if nights != 1 else ''}"
+            plain_lines.append(f"\u2022 Hotel: {hotel_str}")
+            bullets += f"<li style='{_s}'>Hotel: {hotel_str}</li>"
+        plain = "\n".join(plain_lines)
+
+        html = (
+            "<p style='margin:0; line-height:1'><b>MCMX-SERVICES-EXPENSES</b></p>"
+            f"<p style='{_s}'>Includes:</p>"
+            f"<ul style='{_s}; padding-left:16px'>{bullets}</ul>"
+        )
+
+        # qty=1, cost=grand_total so the table total column shows the full amount
+        self._add_prefilled_row(plain, html, 1, grand_total, is_hours=False, margin=0.0)
+
     def _qty_for_row(self, row):
         """Return (numeric_qty, display_suffix) for the given row."""
         qty_item = self.table.item(row, self._COL_QTY)
@@ -2522,7 +2870,7 @@ class TableSection(CollapsibleCard):
 
     def get_data(self):
         # Export: Part Number, Qty, Sale Price (marked-up unit), Line Total
-        # Cost and Margin % are UI-only and not exported
+        # Cost and Margin % are also saved so they survive re-import.
         rows = []
         for row in range(self.table.rowCount()):
             part_item = self.table.item(row, self._COL_PART)
@@ -2536,6 +2884,8 @@ class TableSection(CollapsibleCard):
                 self.table.item(row, self._COL_LINE_TOT).text() if self.table.item(row, self._COL_LINE_TOT) else "",
                 self.table.item(row, self._COL_TOTAL).text()    if self.table.item(row, self._COL_TOTAL)    else "",
                 part_html,   # index 5 — rich HTML for Part Number
+                self.table.item(row, self._COL_COST).text()   if self.table.item(row, self._COL_COST)   else "",  # index 6 — unit cost
+                self.table.item(row, self._COL_MARGIN).text() if self.table.item(row, self._COL_MARGIN) else "",  # index 7 — per-row margin %
             ])
         bom_hdr = self._bom_header_edit.text().strip() if hasattr(self, '_bom_header_edit') else ""
         return {"type": "table", "rows": rows, "header": bom_hdr}
@@ -2741,6 +3091,20 @@ class DynamicFormWidget:
                         item = tbl.item(r_i, widget._COL_PART)
                         if item:
                             item.setData(Qt.ItemDataRole.UserRole, row[5])
+                    # Restore unit cost (index 6) — ensures re-imported rows aren't blank
+                    if len(row) > 6 and row[6] != "":
+                        cost_item = tbl.item(r_i, widget._COL_COST)
+                        if cost_item is None:
+                            cost_item = QTableWidgetItem()
+                            tbl.setItem(r_i, widget._COL_COST, cost_item)
+                        cost_item.setText(str(row[6]))
+                    # Restore per-row margin (index 7) — 0.0 means pass-through, not global
+                    if len(row) > 7 and row[7] != "":
+                        margin_item = tbl.item(r_i, widget._COL_MARGIN)
+                        if margin_item is None:
+                            margin_item = QTableWidgetItem()
+                            tbl.setItem(r_i, widget._COL_MARGIN, margin_item)
+                        margin_item.setText(str(row[7]))
                     # Restore Hours? checkbox without triggering recalculation;
                     # _refresh_all_totals() below will use the correct state.
                     if is_hours_row and r_i < len(widget._hours_checkboxes):

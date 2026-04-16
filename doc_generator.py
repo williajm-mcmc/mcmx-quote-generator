@@ -1028,6 +1028,14 @@ def _inject_section_numbers(doc, sections):
                 p_el.append(_hdr_run_xml(hdr))
             else:
                 para.runs[0]._r.addprevious(_hdr_run_xml(f"{num}.  "))
+            # Explicitly set outlineLvl=0 so the TOC \u field picks this up
+            # (guarantees correct page numbers even if _set_header_outline_levels misses it)
+            _pPr = para._p.get_or_add_pPr()
+            for _old in _pPr.findall(qn('w:outlineLvl')):
+                _pPr.remove(_old)
+            _ol = OxmlElement('w:outlineLvl')
+            _ol.set(qn('w:val'), '0')
+            _pPr.append(_ol)
             # Add bookmark so the TOC can use PAGEREF for accurate page numbers
             bm_name = f'_tocs{num}'
             _stamp_bookmark(para._p, bm_name, 1000 + len(bookmarks), qn)
