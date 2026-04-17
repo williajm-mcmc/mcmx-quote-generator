@@ -22,7 +22,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install pyinstaller PyQt6 python-docx docxtpl pillow
+        run: pip install pyinstaller PyQt6 python-docx docxtpl pillow openpyxl
 
       - name: Convert icon
         run: |
@@ -70,7 +70,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install pyinstaller PyQt6 python-docx docxtpl pillow
+        run: pip install pyinstaller PyQt6 python-docx docxtpl pillow openpyxl
 
       - name: Convert icon to icns
         run: |

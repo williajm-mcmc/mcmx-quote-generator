@@ -68,7 +68,7 @@ There is no system installer — upgrading is just a folder swap. Your `.mcmxq` 
 ### Prerequisites
 
 ```bash
-pip install PyQt6 python-docx docxtpl pillow pyinstaller
+pip install PyQt6 python-docx docxtpl pillow openpyxl pyinstaller
 ```
 
 > `markupsafe`, `jinja2`, and `lxml` are pulled in automatically as dependencies of `docxtpl`.

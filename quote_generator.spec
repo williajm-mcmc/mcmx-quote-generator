@@ -36,9 +36,13 @@ hidden = [
     'lxml.etree',
     'lxml._elementpath',
     'html.parser',
+    'openpyxl',               # IBE / Cost Estimator Excel export
+    'openpyxl.styles',
+    'openpyxl.utils',
 ]
 hidden += collect_submodules('docx')
 hidden += collect_submodules('docxtpl')
+hidden += collect_submodules('openpyxl')
 
 # ── Unused modules to exclude ─────────────────────────────────────────────────
 # Stripping unused PyQt6 components and stdlib bloat saves ~15-20 MB.

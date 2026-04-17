@@ -4,7 +4,7 @@
 #  Must be run ON a Mac.  Copy the entire project folder to the Mac first.
 #
 #  Prerequisites (run once):
-#    pip install pyinstaller PyQt6 python-docx docxtpl
+#    pip install pyinstaller PyQt6 python-docx docxtpl openpyxl
 #
 #  Optional – convert logo.png to an .icns icon:
 #    mkdir MyIcon.iconset
