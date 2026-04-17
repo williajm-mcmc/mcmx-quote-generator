@@ -800,9 +800,42 @@ class InsertTableDialog(QDialog):
     _STYLE = """
         QDialog  { background:#ffffff; color:#1a1a2e; }
         QLabel   { color:#1a1a2e; background:transparent; }
-        QSpinBox { background:#ffffff; color:#1a1a2e;
-                   border:1px solid #dde1e7; border-radius:4px; padding:4px 8px; }
-        QCheckBox { color:#1a1a2e; }
+
+        /* ── Spin boxes: must include button sub-controls or Qt hides the arrows ── */
+        QSpinBox {
+            background:#ffffff; color:#1a1a2e;
+            border:1px solid #dde1e7; border-radius:4px;
+            padding:4px 24px 4px 8px;
+        }
+        QSpinBox::up-button {
+            subcontrol-origin: border; subcontrol-position: top right;
+            width:20px; height:50%;
+            border-left:1px solid #dde1e7; border-top-right-radius:4px;
+            background:#f4f6fa;
+        }
+        QSpinBox::up-button:hover   { background:#e0e4f0; }
+        QSpinBox::up-button:pressed { background:#d0d8ef; }
+        QSpinBox::down-button {
+            subcontrol-origin: border; subcontrol-position: bottom right;
+            width:20px; height:50%;
+            border-left:1px solid #dde1e7; border-bottom-right-radius:4px;
+            background:#f4f6fa;
+        }
+        QSpinBox::down-button:hover   { background:#e0e4f0; }
+        QSpinBox::down-button:pressed { background:#d0d8ef; }
+
+        /* ── Checkboxes: explicit indicator rules keep the box visible ── */
+        QCheckBox { color:#1a1a2e; spacing:8px; }
+        QCheckBox::indicator {
+            width:15px; height:15px;
+            border:1px solid #9aa5c8; border-radius:2px;
+            background:#ffffff;
+        }
+        QCheckBox::indicator:hover   { border-color:#3a5bd9; }
+        QCheckBox::indicator:checked {
+            background:#3a5bd9; border-color:#3a5bd9;
+        }
+
         QPushButton { background:#f4f6fa; color:#1a1a2e;
                       border:1px solid #c8cedd; border-radius:4px;
                       padding:5px 16px; min-width:64px; }
@@ -848,7 +881,12 @@ class InsertTableDialog(QDialog):
         layout.addWidget(sep)
 
         self.total_cb = QCheckBox("Add a Total row at the bottom")
-        self.total_cb.setStyleSheet("QCheckBox { font-weight:600; color:#1a1a2e; }")
+        self.total_cb.setStyleSheet(
+            "QCheckBox { font-weight:600; color:#1a1a2e; spacing:8px; }"
+            "QCheckBox::indicator { width:15px; height:15px;"
+            "  border:1px solid #9aa5c8; border-radius:2px; background:#ffffff; }"
+            "QCheckBox::indicator:hover { border-color:#3a5bd9; }"
+            "QCheckBox::indicator:checked { background:#3a5bd9; border-color:#3a5bd9; }")
         self.total_cb.stateChanged.connect(self._on_total_toggled)
         layout.addWidget(self.total_cb)
 
@@ -886,7 +924,12 @@ class InsertTableDialog(QDialog):
         self._col_checkboxes.clear()
         for i in range(n):
             cb = QCheckBox(f"Column {i + 1}")
-            cb.setStyleSheet("QCheckBox { color:#1a1a2e; font-size:11px; }")
+            cb.setStyleSheet(
+                "QCheckBox { color:#1a1a2e; font-size:11px; spacing:8px; }"
+                "QCheckBox::indicator { width:14px; height:14px;"
+                "  border:1px solid #9aa5c8; border-radius:2px; background:#ffffff; }"
+                "QCheckBox::indicator:hover { border-color:#3a5bd9; }"
+                "QCheckBox::indicator:checked { background:#3a5bd9; border-color:#3a5bd9; }")
             self._col_checks_layout.addWidget(cb)
             self._col_checkboxes.append(cb)
 
@@ -2269,6 +2312,18 @@ class TableSection(CollapsibleCard):
         btn_row.addWidget(eng_btn); btn_row.addWidget(trav_btn); btn_row.addWidget(exp_btn)
         btn_row.addStretch()
         self._body_layout.addLayout(btn_row)
+
+        # Info note — breakdown details in Travel/Expenses rows are for reference only
+        _breakdown_note = QLabel(
+            "\u2139\u00a0 Drive time, mileage, meal, and hotel breakdowns are shown "
+            "here for reference only \u2014 they will not appear in the generated document.")
+        _breakdown_note.setWordWrap(True)
+        _breakdown_note.setStyleSheet(
+            "QLabel { color:#6672a0; font-size:10px; font-style:italic; "
+            "background:#f0f2f9; border:1px solid #dde1e7; "
+            "border-radius:4px; padding:4px 8px; }")
+        self._body_layout.addWidget(_breakdown_note)
+
         # Track hours state per row
         self._hours_rows = set()
 
@@ -2562,7 +2617,7 @@ class TableSection(CollapsibleCard):
         # ── Build bullet lines (only non-zero values shown) ──────────────────
         plain_bullets = []
         html_bullets  = ""
-        _s = "font-size:9pt; line-height:1; margin:0"
+        _s = "font-size:8pt; line-height:1; margin:0"
         if onsite > 0:
             plain_bullets.append(f"\u2022 {_fmt_hrs(onsite)} of On-Site Support")
             html_bullets += f"<li style='{_s}'>{_fmt_hrs(onsite)} of On-Site Support</li>"
@@ -2585,7 +2640,7 @@ class TableSection(CollapsibleCard):
             "<p style='margin:0; line-height:1'><b>MCMX-SERVICES-AFSE</b></p>"
             f"<p style='{_s}'>Hourly Support \u2013 Automation Field Service Engineer</p>"
             f"<ul style='{_s}; padding-left:16px'>{html_bullets}</ul>"
-            "<p style='margin:2px 0 0 0; line-height:1'><b>Rates:</b></p>"
+            "<p style='margin:2px 0 0 0; line-height:1; font-size:9pt'><b>Rates:</b></p>"
             f"<p style='{_s}'>Standard Hourly Rate \u2013 $225.00/hr&nbsp;&nbsp;(M-F, 8-5)</p>"
             f"<p style='{_s}'>Overtime Hourly Rate \u2013 $337.50/hr</p>"
             f"<p style='{_s}'>Sunday/Holiday Hourly Rate \u2013 $450.00/hr</p>"
@@ -2615,7 +2670,7 @@ class TableSection(CollapsibleCard):
             "Includes:\n"
             f"\u2022 Drive Time ({time_str} total)"
         )
-        _s = "font-size:9pt; line-height:1; margin:0"
+        _s = "font-size:8pt; line-height:1; margin:0"
         html = (
             "<p style='margin:0; line-height:1'><b>MCMX-SERVICES-TRAVEL</b></p>"
             f"<p style='{_s}'>Includes:</p>"
@@ -2730,14 +2785,13 @@ class TableSection(CollapsibleCard):
         grand_total = mile_total + meal_total + hotel_total
 
         # ── Build BOM cell content (no pricing shown — just what's included) ──
-        _s = "font-size:9pt; line-height:1; margin:0"
+        _s = "font-size:8pt; line-height:1; margin:0"
 
         plain_lines = ["MCMX-SERVICES-EXPENSES", "Includes:"]
         bullets = ""
         if miles > 0:
-            mi_str = f"{int(miles)} mi"
-            plain_lines.append(f"\u2022 Mileage: {mi_str}")
-            bullets += f"<li style='{_s}'>Mileage: {mi_str}</li>"
+            plain_lines.append("\u2022 Mileage")
+            bullets += f"<li style='{_s}'>Mileage</li>"
         if meal_qty > 0:
             meal_str = f"{meal_qty} meal{'s' if meal_qty != 1 else ''}"
             plain_lines.append(f"\u2022 Meals: {meal_str}")
@@ -2873,7 +2927,7 @@ class TableSection(CollapsibleCard):
         # Cost and Margin % are also saved so they survive re-import.
         rows = []
         for row in range(self.table.rowCount()):
-            part_item = self.table.item(row, self._COL_PART)
+            part_item  = self.table.item(row, self._COL_PART)
             part_plain = part_item.text() if part_item else ""
             part_html  = (part_item.data(Qt.ItemDataRole.UserRole) or "") if part_item else ""
             rows.append([
@@ -2995,11 +3049,15 @@ class DynamicFormWidget:
         # Swap in list
         self.sections[idx], self.sections[new_idx] = (
             self.sections[new_idx], self.sections[idx])
-        # Rebuild layout order
+        # Rebuild layout order.
+        # Use insertWidget(i, …) which guarantees the position, and call
+        # show() after re-adding — removeWidget can set WA_WState_Hidden
+        # on the widget, which addWidget alone won't clear in PyQt6.
         for s in self.sections:
             self.scroll_layout.removeWidget(s)
-        for s in self.sections:
-            self.scroll_layout.addWidget(s)
+        for i, s in enumerate(self.sections):
+            self.scroll_layout.insertWidget(i, s)
+            s.show()
         self._renumber_sections()
 
     def add_section(self, section_type: str):

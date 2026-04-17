@@ -10,6 +10,32 @@ from docx.oxml.ns import qn as _qn
 from docx.oxml import OxmlElement
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# markupsafe is a required dependency of Jinja2 (and therefore docxtpl).
+# Wrapping pre-escaped strings in Markup tells Jinja2 the value is already
+# XML-safe, preventing double-escaping when docxtpl's autoescape is on.
+try:
+    from markupsafe import Markup as _Markup
+except ImportError:
+    _Markup = None   # fall back to plain str; escaping still applied
+
+
+def _xml_safe(v):
+    """
+    Escape XML special characters in a user-supplied string, then mark it
+    as already-safe so docxtpl / Jinja2 will not escape it a second time.
+
+    Without this, a project name like "AT&T" produces a bare & in the Word
+    XML string that docxtpl passes to lxml, causing:
+        xmlParseEntityRef: no name, line 1, column N (<string>, line 1)
+    """
+    if not isinstance(v, str):
+        return v
+    escaped = (v.replace('&',  '&amp;')
+                .replace('<',  '&lt;')
+                .replace('>',  '&gt;')
+                .replace('"',  '&quot;'))
+    return _Markup(escaped) if _Markup is not None else escaped
+
 _HERE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 
 BOM_HEADERS = ["Part Number", "Qty", "Price Each", "Total Price"]
@@ -1209,11 +1235,14 @@ def _insert_toc(doc, entries):
     for _e in _rm:
         _e.getparent().remove(_e)
 
-    # Build a single paragraph containing the { TOC \u \h \z } field.
-    # \u  = use paragraph outline level (set on section headers by _set_header_outline_levels)
-    # \h  = make entries hyperlinks
-    # \z  = hide tab/page-number in web layout
-    # dirty="true" forces Word to regenerate on open (works even in Protected View).
+    # Build a single paragraph containing the { TOC \o "1-9" \u \h \z } field.
+    # \o "1-9" = include built-in heading styles 1–9 (standard Word ribbon default)
+    # \u       = also include paragraphs with an outline level set via w:outlineLvl
+    #            (our section headers use outlineLvl=0, not a Heading style)
+    # \h       = make entries hyperlinks
+    # \z       = hide tab/page-number in web layout
+    # dirty="true" on fldChar:begin + updateFields=1 in settings.xml forces Word
+    # to regenerate on first open.
     p = OxmlElement('w:p')
 
     r_begin = OxmlElement('w:r')
@@ -1226,7 +1255,7 @@ def _insert_toc(doc, entries):
     r_instr = OxmlElement('w:r')
     it = OxmlElement('w:instrText')
     it.set(f'{{{_XML}}}space', 'preserve')
-    it.text = ' TOC \\u \\h \\z '
+    it.text = ' TOC \\o "1-9" \\u \\h \\z '
     r_instr.append(it)
     p.append(r_instr)
 
@@ -1473,15 +1502,20 @@ def generate_doc(form_data, template_path=None, output_path=None):
     if form_data.get("customer_picture"):
         customer_image = InlineImage(doc, form_data["customer_picture"], width=Mm(50))
 
+    def _safe_section(sec: dict) -> dict:
+        """Return a copy of a section dict with all string values XML-escaped."""
+        return {k: (_xml_safe(v) if isinstance(v, str) else v)
+                for k, v in sec.items()}
+
     context = {
-        "project_name":      form_data.get("project_name",""),
-        "customer_name":     form_data.get("customer_name",""),
-        "customer_location": form_data.get("customer_location",""),
-        "contact_info":      form_data.get("contact_info",""),
-        "proposal_number":   form_data.get("proposal_number",""),
+        "project_name":      _xml_safe(form_data.get("project_name","")),
+        "customer_name":     _xml_safe(form_data.get("customer_name","")),
+        "customer_location": _xml_safe(form_data.get("customer_location","")),
+        "contact_info":      _xml_safe(form_data.get("contact_info","")),
+        "proposal_number":   _xml_safe(form_data.get("proposal_number","")),
         "customer_picture":  customer_image,
-        "today_date":        form_data.get("today_date",""),
-        "sections":          sections,
+        "today_date":        _xml_safe(form_data.get("today_date","")),
+        "sections":          [_safe_section(sec) for sec in sections],
     }
 
     doc.render(context)
@@ -1538,8 +1572,14 @@ def generate_doc(form_data, template_path=None, output_path=None):
                     _data = _zin.read(_item.filename)
                     if _item.filename == 'word/settings.xml':
                         _s = _data.decode('utf-8')
-                        # Remove any existing updateFields element (may be val="0")
-                        _s = _re2.sub(r'<w:updateFields[^/]*/>', '', _s)
+                        # Remove any existing updateFields element.
+                        # Handle both the self-closing form (<w:updateFields .../>) and
+                        # the paired form (<w:updateFields ...>...</w:updateFields>) so
+                        # we don't end up with two conflicting elements (which causes
+                        # Word to honour the first one, often val="0", and skip updates).
+                        _s = _re2.sub(r'<w:updateFields[^>]*/>', '', _s)
+                        _s = _re2.sub(r'<w:updateFields[^>]*>.*?</w:updateFields>',
+                                      '', _s, flags=_re2.DOTALL)
                         # Insert with val="1" before closing tag
                         _s = _re2.sub(
                             r'</w:settings>',

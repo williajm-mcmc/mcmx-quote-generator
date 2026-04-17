@@ -1146,8 +1146,21 @@ class ThermalImagingWidget(QWidget):
         self._weekend_days = gap_days
 
         sched = []
+
+        # Travel In/Out only when at least one tech's journey warrants it
+        # (flying, or drive time >= 2 hrs one-way).  Local techs drive RT
+        # each day — no overnight stays, so no dedicated travel days.
+        _n_techs = self._num_techs
+        _any_hotel_needed = any(
+            _n(self._tech_rows[i]["travel"].text(), 0.0) >= 2.0 or
+            self._tech_rows[i]["mode"].currentText() == "Flying"
+            for i in range(_n_techs)
+            if i < len(self._tech_rows)
+        )
+
         travel_in_day = _DAY_NAMES[(wdays[0] - 1) % 7]
-        sched.append((travel_in_day, "Travel In", False, True))
+        if _any_hotel_needed:
+            sched.append((travel_in_day, "Travel In", False, True))
 
         done = 0; last_wd = wdays[0]; first_week = True
         while done < work_days:
@@ -1160,7 +1173,8 @@ class ThermalImagingWidget(QWidget):
                 sched.append((_DAY_NAMES[wd], f"Work  Day {done}", True, True))
 
         travel_out_day = _DAY_NAMES[(last_wd + 1) % 7]
-        sched.append((travel_out_day, "Travel Out", False, False))
+        if _any_hotel_needed:
+            sched.append((travel_out_day, "Travel Out", False, False))
 
         self._schedule = sched
         self._confirmed = {}

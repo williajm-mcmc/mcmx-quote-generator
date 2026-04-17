@@ -1193,12 +1193,17 @@ class MainWindow(QMainWindow):
         if not output_path:
             return
 
+        # Derive the document's proposal-number field from the actual chosen
+        # filename stem so it always matches what's on disk, including the
+        # date stamp and version suffix (e.g. "P-2024-001-20240416 V1.0").
+        _doc_proposal = _os.path.splitext(_os.path.basename(output_path))[0]
+
         data = self.form_widget.get_form_data()
         data["project_name"]      = self.lineEdit_project.text().strip()
         data["customer_name"]     = self.lineEdit_customer.text().strip()
         data["customer_location"] = self.lineEdit_location.text().strip()
         data["contact_info"]      = self.textEdit_contact.toPlainText().strip()
-        data["proposal_number"]   = self.lineEdit_proposal.text().strip()
+        data["proposal_number"]   = _doc_proposal
         data["customer_picture"]  = self._picture_label.image_path
         data["today_date"]        = _format_date_ordinal(date.today())
         data["version"]           = self._version_str()

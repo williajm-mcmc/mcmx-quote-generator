@@ -3,11 +3,11 @@ name: Build QuoteGenerator
 on:
   push:
     tags:
-      - 'v*'          # trigger on version tags like v1.0, v1.1
-  workflow_dispatch:  # also allows manual trigger from GitHub UI
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: write   # required to create GitHub Releases
+  contents: write
 
 jobs:
   build-windows:
@@ -48,12 +48,12 @@ jobs:
           files-folder:                 dist\QuoteGenerator
           files-folder-filter:          exe
           file-digest:                  SHA256
-          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-rfc3181:            http://timestamp.acs.microsoft.com
           timestamp-digest:             SHA256
 
       - name: Zip output
-        run: Compress-Archive -Path dist\QuoteGenerator\* -DestinationPath QuoteGenerator-Windows.zip
         shell: pwsh
+        run: Compress-Archive -Path dist\QuoteGenerator\* -DestinationPath QuoteGenerator-Windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -107,6 +107,38 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: false
+          body: |
+            ## MCMX Quote Generator v2.0
+
+            ### What's New
+
+            **Bug Fixes**
+            - Fixed XML parse crash when project/customer names contain `&`, `<`, `>`, or `"` (e.g. "AT&T")
+            - Section ▲▼ arrows now correctly reorder sections visually and in the generated document
+            - Insert Table dialog: spinner arrows and checkbox indicators are now visible
+            - Proposal number on the document cover page now matches the saved filename (date + version)
+            - Table of Contents page numbers no longer all show "1" — fixed `updateFields` injection and TOC field switches
+
+            **Quote Generator — BOM Service Rows**
+            - MCMX-SERVICES-EXPENSES service name is now **bold** in the generated Word document
+            - Drive time (TRAVEL) and mileage/meals/hotel breakdown (EXPENSES) are now stripped from the generated document; a note in the tool explains they are for reference only
+            - Mileage bullet now reads `• Mileage` (no count) for a cleaner document
+            - Service row subtext renders at 8 pt; AFSE "Rates:" label at 9 pt bold
+
+            **IBE & Thermal Estimators**
+            - Travel In / Travel Out rows suppressed when no overnight stay is needed (local crews)
+
+            ---
+
+            ### Upgrading from v1.1
+
+            **Windows:** Delete the old `QuoteGenerator` folder → extract this release's `QuoteGenerator-Windows.zip` → run `QuoteGenerator.exe`.
+
+            **macOS:** Move `QuoteGenerator.app` from Applications to Trash → extract `QuoteGenerator-Mac.zip` → drag the new `QuoteGenerator.app` to Applications.
+
+            Your `.mcmxq` project files are fully compatible — no migration needed.
+
           files: |
             QuoteGenerator-Windows/QuoteGenerator-Windows.zip
             QuoteGenerator-Mac/QuoteGenerator-Mac.zip
