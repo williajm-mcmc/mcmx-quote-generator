@@ -98,9 +98,9 @@ exe = EXE(
     name='QuoteGenerator',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    upx=True,
-    upx_exclude=['vcruntime140.dll', 'msvcp140.dll'],  # UPX can corrupt these
+    strip=False,
+    upx=False,                      # UPX corrupts python3xx.dll — keep off
+    upx_exclude=[],
     console=False,                 # no console window
     icon='logo.ico',               # Windows requires .ico
 )
@@ -110,9 +110,9 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=True,
-    upx=True,
-    upx_exclude=['vcruntime140.dll', 'msvcp140.dll'],
+    strip=False,
+    upx=False,                      # UPX corrupts python3xx.dll — keep off
+    upx_exclude=[],
     name='QuoteGenerator',
 )
 
