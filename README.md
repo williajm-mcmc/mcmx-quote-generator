@@ -13,15 +13,7 @@ A desktop application for building and exporting professional project quotes as 
 - **Proposal number on cover page** — the proposal number printed on the document's first page now matches the saved filename exactly, including the date stamp and version (e.g. `P-2024-001-20240416 V1.0`).
 - **Table of Contents page numbers** — ToC entries no longer all show page 1. Fixed a `settings.xml` regex that could leave conflicting `updateFields` elements, and updated the TOC field instruction to use `\o "1-9" \u` (matching what Word's ribbon generates) for reliable page-number updates across Word versions.
 
-### Quote Generator — BOM / Service Rows
-- **MCMX-SERVICES-EXPENSES bold** — the service name is now **bold** in the generated Word document.
-- **Reference-only breakdown** — drive time (TRAVEL) and the mileage / meals / hotel breakdown (EXPENSES) remain visible in the BOM tool for reference but are automatically stripped from the generated Word document. A note below the service-row buttons reminds you of this.
-- **Expenses mileage bullet** — the mileage bullet now reads `• Mileage` without a count, for a cleaner document appearance.
-- **Service row font sizes** — subtext in all three service rows (AFSE / TRAVEL / EXPENSES) renders at **8 pt**; the AFSE "Rates:" label renders at **9 pt bold**, matching the intended document design.
-
-### IBE & Thermal Estimators
-- **Travel In / Travel Out** — these schedule rows are now suppressed when no overnight stay is required (all techs driving under 2 hours and not flying). Local crews see only their per-day work rows.
-
+### IBE, OTTO, Thermal, and Cost Estimator Tools
 ---
 
 ## Features
