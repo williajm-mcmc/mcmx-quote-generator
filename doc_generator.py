@@ -149,6 +149,15 @@ def _build_bom_table(doc, rows):
                 tmp = _TmpDoc()
                 _html_to_docx_paragraphs(tmp, part_html)
 
+                # Post-process: bold every run in the first non-empty paragraph
+                # so the part-name line is always bold regardless of cell editor
+                # formatting (custom items, service rows, etc.)
+                from docx.shared import Pt as _Pt2
+                _all_paras = [p for p in tmp.paragraphs if p.runs]
+                if _all_paras:
+                    for _r in _all_paras[0].runs:
+                        _r.bold = True
+
                 # Copy bullet numbering definitions into the rendered doc so
                 # any numId references inside the cell resolve correctly.
                 try:
@@ -188,9 +197,9 @@ def _build_bom_table(doc, rows):
                     cells[0]._tc.append(_Ep('w:p'))
             except Exception:
                 import traceback; traceback.print_exc()
-                _style_cell(cells[0], part, bold=False, font_size=11)
+                _style_cell(cells[0], part, bold=True, font_size=11)
         else:
-            _style_cell(cells[0], part, bold=False, font_size=11)
+            _style_cell(cells[0], part, bold=True, font_size=11)
         _style_cell(cells[1], qty,  bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
         _style_cell(cells[2], f"${_math.ceil(unit_price):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)
         _style_cell(cells[3], f"${_math.ceil(line_total):,}", bold=True, font_size=11, align=WD_ALIGN_PARAGRAPH.RIGHT)

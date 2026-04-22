@@ -126,6 +126,99 @@ def _apply_margin(cost: float, margin_pct: float) -> float:
     return _math.ceil(cost / (1.0 - margin_pct / 100.0))
 
 
+# ── Stepper widget (replaces QSpinBox / QDoubleSpinBox in dialogs) ────────────
+class _NumStepper(QWidget):
+    """[−] [value] [+]  — visible, clickable replacement for QSpinBox."""
+
+    _BTN = (
+        "QPushButton { background:#f4f6fa; color:#3a3a5c; border:1px solid #c8cedd;"
+        "  border-radius:4px; font-size:16px; font-weight:700; padding:0px; }"
+        "QPushButton:hover  { background:#e0e4ef; }"
+        "QPushButton:pressed { background:#d0d8ef; }")
+    _EDIT = (
+        "QLineEdit { background:#ffffff; border:1px solid #d0d4de;"
+        "  border-radius:4px; color:#1a1a2e; font-size:11px;"
+        "  font-weight:600; padding:3px 6px; }"
+        "QLineEdit:focus { border-color:#7b8cde; }")
+
+    def __init__(self, default=0.0, mn=0.0, mx=99999.0, step=1.0,
+                 decimals=1, suffix="", prefix="", parent=None):
+        super().__init__(parent)
+        self._mn   = float(mn);   self._mx  = float(mx)
+        self._step = float(step); self._dec = int(decimals)
+        self._sfx  = suffix;      self._pfx = prefix
+        self._val  = float(default)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(4)
+
+        self._minus = QPushButton("−"); self._minus.setFixedSize(28, 28)
+        self._minus.setStyleSheet(self._BTN)
+        self._minus.clicked.connect(self._decrement)
+        lay.addWidget(self._minus)
+
+        self._edit = QLineEdit(self._fmt(self._val))
+        self._edit.setFixedWidth(110)
+        self._edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._edit.setStyleSheet(self._EDIT)
+        self._edit.editingFinished.connect(self._on_typed)
+        lay.addWidget(self._edit)
+
+        self._plus = QPushButton("+"); self._plus.setFixedSize(28, 28)
+        self._plus.setStyleSheet(self._BTN)
+        self._plus.clicked.connect(self._increment)
+        lay.addWidget(self._plus)
+
+    def _fmt(self, v):
+        n = (f"{v:.{self._dec}f}" if self._dec > 0 else str(int(round(v))))
+        return f"{self._pfx}{n}{self._sfx}"
+
+    def _parse(self, txt):
+        clean = txt.replace(self._pfx, "").replace(self._sfx, "").strip()
+        try:   return float(clean)
+        except ValueError: return self._val
+
+    def _clamp(self, v):
+        return max(self._mn, min(self._mx, round(v, self._dec)))
+
+    def _set(self, v):
+        self._val = self._clamp(v)
+        self._edit.setText(self._fmt(self._val))
+
+    def _increment(self): self._set(self._val + self._step)
+    def _decrement(self): self._set(self._val - self._step)
+    def _on_typed(self):  self._set(self._parse(self._edit.text()))
+
+    def value(self):
+        self._on_typed(); return self._val
+
+    def setValue(self, v): self._set(float(v))
+
+
+_DIALOG_OK_STYLE = (
+    "QPushButton { background:#3a3a5c; color:#ffffff; border:1px solid #3a3a5c;"
+    "  border-radius:4px; padding:5px 18px; font-size:11px; font-weight:600; }"
+    "QPushButton:hover  { background:#2a2a4c; }"
+    "QPushButton:pressed { background:#1e1e38; }")
+_DIALOG_CANCEL_STYLE = (
+    "QPushButton { background:#f4f6fa; color:#3a3a5c; border:1px solid #dde1e7;"
+    "  border-radius:4px; padding:5px 18px; font-size:11px; }"
+    "QPushButton:hover  { background:#eaecf4; }"
+    "QPushButton:pressed { background:#dce2ef; }")
+
+
+def _styled_button_box(parent_dlg):
+    """Return a QDialogButtonBox with clearly visible OK / Cancel buttons."""
+    btns = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        parent=parent_dlg)
+    btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(_DIALOG_OK_STYLE)
+    btns.button(QDialogButtonBox.StandardButton.Cancel).setStyleSheet(_DIALOG_CANCEL_STYLE)
+    btns.accepted.connect(parent_dlg.accept)
+    btns.rejected.connect(parent_dlg.reject)
+    return btns
+
+
 # ── Delegates ─────────────────────────────────────────────────────────────────
 class PlainTextDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
@@ -2556,19 +2649,13 @@ class TableSection(CollapsibleCard):
 
     def _add_engineering_service(self):
         """Custom dialog: on-site + off-site hours → MCMX-SERVICES-AFSE row at $225/hr."""
-        _FIELD_STYLE = (
-            "QDoubleSpinBox {"
-            "  background:#ffffff; border:1px solid #d0d4de;"
-            "  border-radius:4px; padding:3px 6px; font-size:11px; color:#1a1a2e; }"
-            "QDoubleSpinBox:focus { border-color:#7b8cde; }"
-        )
         _LBL_SECTION = "font-size:11px; font-weight:600; color:#3a3a5c;"
         _LBL_SUB     = "font-size:10px; color:#555577;"
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Add Engineering Service")
         dlg.setStyleSheet("QDialog { background:#ffffff; } QLabel { color:#1a1a2e; }")
-        dlg.setMinimumWidth(320)
+        dlg.setMinimumWidth(340)
 
         outer = QVBoxLayout(dlg)
         outer.setSpacing(8)
@@ -2579,13 +2666,9 @@ class TableSection(CollapsibleCard):
         lbl_hdr.setWordWrap(True)
         outer.addWidget(lbl_hdr)
 
-        form = QFormLayout(); form.setSpacing(6)
-        sp_onsite = QDoubleSpinBox(); sp_onsite.setRange(0, 99999); sp_onsite.setDecimals(1)
-        sp_onsite.setSuffix(" hr"); sp_onsite.setValue(4.0)
-        sp_onsite.setStyleSheet(_FIELD_STYLE); sp_onsite.setMinimumWidth(130)
-        sp_offsite = QDoubleSpinBox(); sp_offsite.setRange(0, 99999); sp_offsite.setDecimals(1)
-        sp_offsite.setSuffix(" hr"); sp_offsite.setValue(0.0)
-        sp_offsite.setStyleSheet(_FIELD_STYLE); sp_offsite.setMinimumWidth(130)
+        form = QFormLayout(); form.setSpacing(8)
+        sp_onsite  = _NumStepper(4.0, 0.0, 99999, 0.5, 1, suffix=" hr")
+        sp_offsite = _NumStepper(0.0, 0.0, 99999, 0.5, 1, suffix=" hr")
 
         lbl_on  = QLabel("On-site hours:");  lbl_on.setStyleSheet(_LBL_SUB)
         lbl_off = QLabel("Off-site hours:"); lbl_off.setStyleSheet(_LBL_SUB)
@@ -2593,16 +2676,7 @@ class TableSection(CollapsibleCard):
         form.addRow(lbl_off, sp_offsite)
         outer.addLayout(form)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.setStyleSheet(
-            "QPushButton { background:#f4f6fa; color:#3a3a5c;"
-            "  border:1px solid #dde1e7; border-radius:4px; padding:5px 16px; font-size:11px; }"
-            "QPushButton:hover { background:#eaecf4; }"
-        )
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        outer.addWidget(btns)
+        outer.addWidget(_styled_button_box(dlg))
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -2617,7 +2691,7 @@ class TableSection(CollapsibleCard):
         # ── Build bullet lines (only non-zero values shown) ──────────────────
         plain_bullets = []
         html_bullets  = ""
-        _s = "font-size:8pt; line-height:1; margin:0"
+        _s = "font-size:9pt; line-height:1; margin:0"
         if onsite > 0:
             plain_bullets.append(f"\u2022 {_fmt_hrs(onsite)} of On-Site Support")
             html_bullets += f"<li style='{_s}'>{_fmt_hrs(onsite)} of On-Site Support</li>"
@@ -2648,12 +2722,36 @@ class TableSection(CollapsibleCard):
         self._add_prefilled_row(plain, html, total, 225.0, is_hours=True, margin=0.0)
 
     def _add_travel_row(self):
-        """Prompt for travel time then insert a pre-filled MCMX-SERVICES-TRAVEL row at $175/hr."""
-        hours, ok = QInputDialog.getDouble(
-            self, "Travel \u2014 Hours",
-            "Enter total drive time (hours):", 1.0, 0.0, 99999.0, 2)
-        if not ok:
+        """Custom dialog for travel time → MCMX-SERVICES-TRAVEL row at $175/hr."""
+        _LBL_SECTION = "font-size:11px; font-weight:600; color:#3a3a5c;"
+        _LBL_SUB     = "font-size:10px; color:#555577;"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Travel")
+        dlg.setStyleSheet("QDialog { background:#ffffff; } QLabel { color:#1a1a2e; }")
+        dlg.setMinimumWidth(340)
+
+        outer = QVBoxLayout(dlg)
+        outer.setSpacing(8)
+        outer.setContentsMargins(16, 14, 16, 10)
+
+        lbl_hdr = QLabel("MCMX-SERVICES-TRAVEL — enter drive time")
+        lbl_hdr.setStyleSheet(_LBL_SECTION)
+        lbl_hdr.setWordWrap(True)
+        outer.addWidget(lbl_hdr)
+
+        form = QFormLayout(); form.setSpacing(8)
+        sp_hours = _NumStepper(1.0, 0.0, 99999, 0.5, 2, suffix=" hr")
+        lbl_h = QLabel("Drive time (hours):"); lbl_h.setStyleSheet(_LBL_SUB)
+        form.addRow(lbl_h, sp_hours)
+        outer.addLayout(form)
+
+        outer.addWidget(_styled_button_box(dlg))
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+
+        hours = sp_hours.value()
 
         # Display as "X hr Y min" if fractional, else "X hours"
         total_min = round(hours * 60)
@@ -2665,12 +2763,12 @@ class TableSection(CollapsibleCard):
         else:
             time_str = f"{h_part} hr {m_part} min"
 
+        _s = "font-size:9pt; line-height:1; margin:0"
         plain = (
             "MCMX-SERVICES-TRAVEL\n"
             "Includes:\n"
             f"\u2022 Drive Time ({time_str} total)"
         )
-        _s = "font-size:8pt; line-height:1; margin:0"
         html = (
             "<p style='margin:0; line-height:1'><b>MCMX-SERVICES-TRAVEL</b></p>"
             f"<p style='{_s}'>Includes:</p>"
@@ -2682,19 +2780,13 @@ class TableSection(CollapsibleCard):
 
     def _add_expenses_row(self):
         """Custom dialog to collect mileage, meals, and hotel, then insert MCMX-SERVICES-EXPENSES."""
-        _FIELD_STYLE = (
-            "QDoubleSpinBox, QSpinBox {"
-            "  background:#ffffff; border:1px solid #d0d4de;"
-            "  border-radius:4px; padding:3px 6px; font-size:11px; color:#1a1a2e; }"
-            "QDoubleSpinBox:focus, QSpinBox:focus { border-color:#7b8cde; }"
-        )
-        _LBL_SECTION = "font-size:11px; font-weight:600; color:#3a3a5c; margin-top:6px;"
+        _LBL_SECTION = "font-size:11px; font-weight:600; color:#3a3a5c; margin-top:4px;"
         _LBL_SUB     = "font-size:10px; color:#555577;"
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Add Expenses")
         dlg.setStyleSheet("QDialog { background:#ffffff; } QLabel { color:#1a1a2e; }")
-        dlg.setMinimumWidth(340)
+        dlg.setMinimumWidth(360)
 
         outer = QVBoxLayout(dlg)
         outer.setSpacing(8)
@@ -2705,15 +2797,11 @@ class TableSection(CollapsibleCard):
         lbl_mile.setStyleSheet(_LBL_SECTION)
         outer.addWidget(lbl_mile)
 
-        mile_form = QFormLayout(); mile_form.setSpacing(5)
-        sp_miles = QDoubleSpinBox(); sp_miles.setRange(0, 999999); sp_miles.setDecimals(0)
-        sp_miles.setSuffix(" mi"); sp_miles.setValue(0); sp_miles.setStyleSheet(_FIELD_STYLE)
-        sp_miles.setMinimumWidth(130)
-        sp_rate = QDoubleSpinBox(); sp_rate.setRange(0, 9999); sp_rate.setDecimals(3)
-        sp_rate.setPrefix("$"); sp_rate.setValue(0.720); sp_rate.setStyleSheet(_FIELD_STYLE)
-        sp_rate.setMinimumWidth(130)
+        mile_form = QFormLayout(); mile_form.setSpacing(6)
+        sp_miles = _NumStepper(0,     0, 999999, 10,    0, suffix=" mi")
+        sp_rate  = _NumStepper(0.720, 0, 9999,   0.005, 3, prefix="$")
+        lbl_m = QLabel("Miles:");        lbl_m.setStyleSheet(_LBL_SUB)
         lbl_r = QLabel("Rate per mile:"); lbl_r.setStyleSheet(_LBL_SUB)
-        lbl_m = QLabel("Miles:"); lbl_m.setStyleSheet(_LBL_SUB)
         mile_form.addRow(lbl_m, sp_miles)
         mile_form.addRow(lbl_r, sp_rate)
         outer.addLayout(mile_form)
@@ -2723,14 +2811,10 @@ class TableSection(CollapsibleCard):
         lbl_meal.setStyleSheet(_LBL_SECTION)
         outer.addWidget(lbl_meal)
 
-        meal_form = QFormLayout(); meal_form.setSpacing(5)
-        sp_meal_qty = QSpinBox(); sp_meal_qty.setRange(0, 9999)
-        sp_meal_qty.setSuffix(" meal(s)"); sp_meal_qty.setValue(0)
-        sp_meal_qty.setStyleSheet(_FIELD_STYLE); sp_meal_qty.setMinimumWidth(130)
-        sp_meal_cost = QDoubleSpinBox(); sp_meal_cost.setRange(0, 9999); sp_meal_cost.setDecimals(2)
-        sp_meal_cost.setPrefix("$"); sp_meal_cost.setValue(25.00)
-        sp_meal_cost.setStyleSheet(_FIELD_STYLE); sp_meal_cost.setMinimumWidth(130)
-        lbl_mq = QLabel("Quantity:"); lbl_mq.setStyleSheet(_LBL_SUB)
+        meal_form = QFormLayout(); meal_form.setSpacing(6)
+        sp_meal_qty  = _NumStepper(0,     0, 9999, 1,    0, suffix=" meal(s)")
+        sp_meal_cost = _NumStepper(25.00, 0, 9999, 0.50, 2, prefix="$")
+        lbl_mq = QLabel("Quantity:");     lbl_mq.setStyleSheet(_LBL_SUB)
         lbl_mc = QLabel("Cost per meal:"); lbl_mc.setStyleSheet(_LBL_SUB)
         meal_form.addRow(lbl_mq, sp_meal_qty)
         meal_form.addRow(lbl_mc, sp_meal_cost)
@@ -2741,32 +2825,17 @@ class TableSection(CollapsibleCard):
         lbl_hotel.setStyleSheet(_LBL_SECTION)
         outer.addWidget(lbl_hotel)
 
-        hotel_form = QFormLayout(); hotel_form.setSpacing(5)
-        sp_nights = QSpinBox(); sp_nights.setRange(0, 9999)
-        sp_nights.setSuffix(" night(s)"); sp_nights.setValue(0)
-        sp_nights.setStyleSheet(_FIELD_STYLE); sp_nights.setMinimumWidth(130)
-        sp_hotel_cost = QDoubleSpinBox(); sp_hotel_cost.setRange(0, 9999); sp_hotel_cost.setDecimals(2)
-        sp_hotel_cost.setPrefix("$"); sp_hotel_cost.setValue(150.00)
-        sp_hotel_cost.setStyleSheet(_FIELD_STYLE); sp_hotel_cost.setMinimumWidth(130)
-        lbl_hn = QLabel("Nights:"); lbl_hn.setStyleSheet(_LBL_SUB)
+        hotel_form = QFormLayout(); hotel_form.setSpacing(6)
+        sp_nights     = _NumStepper(0,      0, 9999, 1,    0, suffix=" night(s)")
+        sp_hotel_cost = _NumStepper(150.00, 0, 9999, 5.00, 2, prefix="$")
+        lbl_hn = QLabel("Nights:");        lbl_hn.setStyleSheet(_LBL_SUB)
         lbl_hc = QLabel("Cost per night:"); lbl_hc.setStyleSheet(_LBL_SUB)
         hotel_form.addRow(lbl_hn, sp_nights)
         hotel_form.addRow(lbl_hc, sp_hotel_cost)
         outer.addLayout(hotel_form)
 
         # ── Buttons ───────────────────────────────────────────────────────────
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.setStyleSheet(
-            "QPushButton { background:#f4f6fa; color:#3a3a5c;"
-            "  border:1px solid #dde1e7; border-radius:4px; padding:5px 16px; font-size:11px; }"
-            "QPushButton:hover { background:#eaecf4; }"
-            "QPushButton[text='OK'] { background:#3a3a5c; color:#ffffff; border-color:#3a3a5c; }"
-            "QPushButton[text='OK']:hover { background:#2a2a4c; }"
-        )
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        outer.addWidget(btns)
+        outer.addWidget(_styled_button_box(dlg))
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -2785,7 +2854,7 @@ class TableSection(CollapsibleCard):
         grand_total = mile_total + meal_total + hotel_total
 
         # ── Build BOM cell content (no pricing shown — just what's included) ──
-        _s = "font-size:8pt; line-height:1; margin:0"
+        _s = "font-size:9pt; line-height:1; margin:0"
 
         plain_lines = ["MCMX-SERVICES-EXPENSES", "Includes:"]
         bullets = ""
