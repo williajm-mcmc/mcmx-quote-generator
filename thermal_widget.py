@@ -766,6 +766,7 @@ class ThermalImagingWidget(QWidget):
         cost_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED}; margin-top:4px;")
         layout.addWidget(cost_lbl)
 
+        _FORMULA_STYLE = f"font-size:9px; color:{_SUBTEXT}; font-style:italic;"
         cost_grid = QHBoxLayout(); cost_grid.setSpacing(20)
         for attr, caption in [
             ("_cost_labor",   "Labor (Work)"),
@@ -779,9 +780,13 @@ class ThermalImagingWidget(QWidget):
             lbl = QLabel(caption); lbl.setStyleSheet(f"font-size:10px; color:{_SUBTEXT};")
             col.addWidget(lbl)
             val = QLineEdit("—"); val.setReadOnly(True)
-            val.setStyleSheet(_CALC_STYLE); val.setFixedWidth(100)
+            val.setStyleSheet(_CALC_STYLE); val.setFixedWidth(130)
             col.addWidget(val)
+            formula = QLabel(""); formula.setStyleSheet(_FORMULA_STYLE)
+            formula.setWordWrap(True)
+            col.addWidget(formula)
             setattr(self, attr, val)
+            setattr(self, attr + "_formula", formula)
             cost_grid.addLayout(col)
         cost_grid.addStretch()
         layout.addLayout(cost_grid)
@@ -1541,12 +1546,35 @@ class ThermalImagingWidget(QWidget):
         self._sum_flights.setText(str(flights))
         self._sum_miles.setText(f"{total_drive_miles:,.0f}")
 
+        _lr = _n(self._rate_labor.text(),  self.LABOR_RATE)
+        _tr = _n(self._rate_travel.text(), self.TRAVEL_RATE)
+        _hr = _n(self._rate_hotel.text(),  self.HOTEL_RATE)
+        _mr = _n(self._rate_meal.text(),   self.MEAL_RATE)
+        _mi = _n(self._rate_mile.text(),   self.MILE_RATE)
+
         self._cost_labor.setText(f"${labor_cost:,.2f}")
+        self._cost_labor_formula.setText(
+            f"{onsite_hrs:.1f} hrs × ${_lr:,.2f}/hr")
+
         self._cost_travel.setText(f"${travel_cost:,.2f}")
+        self._cost_travel_formula.setText(
+            f"{travel_hrs:.1f} hrs × ${_tr:,.2f}/hr")
+
         self._cost_hotel.setText(f"${hotel_cost:,.2f}")
+        self._cost_hotel_formula.setText(
+            f"{total_hotel} night{'s' if total_hotel != 1 else ''} × ${_hr:,.2f}/night")
+
         self._cost_meals.setText(f"${meal_cost:,.2f}")
+        self._cost_meals_formula.setText(
+            f"{total_meals} meal{'s' if total_meals != 1 else ''} × ${_mr:,.2f}/meal")
+
         self._cost_miles.setText(f"${mile_cost:,.2f}")
+        self._cost_miles_formula.setText(
+            f"{total_drive_miles:,.0f} mi × ${_mi:.3f}/mi")
+
         self._cost_flights.setText(f"${flight_total:,.2f}")
+        self._cost_flights_formula.setText(
+            f"{flights} flight{'s' if flights != 1 else ''}" if flights else "—")
 
         self._summary_card.setVisible(True)
         self._recalc_cost_totals()
@@ -1588,6 +1616,8 @@ class ThermalImagingWidget(QWidget):
         self._confirmed["meals"] = new_meals
         self._confirmed["meal_cost"] = new_meal_cost
         self._cost_meals.setText(f"${new_meal_cost:,.2f}")
+        self._cost_meals_formula.setText(
+            f"{new_meals} meal{'s' if new_meals != 1 else ''} × ${meal_rate:,.2f}/meal")
         self._recalc_cost_totals()
 
     def _recalc_ase_total(self):
