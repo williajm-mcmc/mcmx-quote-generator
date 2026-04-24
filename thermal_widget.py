@@ -1919,16 +1919,16 @@ class ThermalCard(_Card):
 
 def generate_thermal_doc(data: dict, output_path: str):
     """Generate thermal imaging report via docxtpl then python-docx pricing table."""
-    import os as _os
+    import os as _os, sys as _sys
     from docxtpl import DocxTemplate, InlineImage
     from docx.shared import Mm
     from datetime import date as _today_dt
 
-    here = _os.path.dirname(_os.path.abspath(__file__))
+    # Use sys._MEIPASS when running from a PyInstaller bundle so the
+    # template is found inside the extracted _internal folder.
+    _here = getattr(_sys, '_MEIPASS', _os.path.dirname(_os.path.abspath(__file__)))
     candidates = [
-        _os.path.join(here, "thermal_template.docx"),
-        _os.path.join(_os.path.expanduser("~"), "Desktop",
-                      "Mennel Milling IR", "MENMILL-IRSTUDY-MCMXMM-20260407 V1.0.docx"),
+        _os.path.join(_here, "thermal_template.docx"),
     ]
     template = next((c for c in candidates if _os.path.exists(c)), None)
     if not template:

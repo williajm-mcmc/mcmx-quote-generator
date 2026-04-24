@@ -1473,10 +1473,12 @@ def generate_otto_doc(data: dict, output_path: str):
     from docx.oxml.ns import qn
     from lxml import etree
 
-    here = os.path.dirname(os.path.abspath(__file__))
+    import sys as _sys
+    # Use sys._MEIPASS when running from a PyInstaller bundle so the
+    # template is found inside the extracted _internal folder.
+    _here = getattr(_sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     candidates = [
-        os.path.join(here, "otto_template.docx"),
-        os.path.join(os.path.expanduser("~"), "Desktop", "MCMXHERK-20260406 V1.0.docx"),
+        os.path.join(_here, "otto_template.docx"),
     ]
     template = next((c for c in candidates if os.path.exists(c)), None)
     if not template:

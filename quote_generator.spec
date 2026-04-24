@@ -15,9 +15,11 @@ block_cipher = None
 
 # ── Data files to bundle ──────────────────────────────────────────────────────
 added_datas = [
-    ('logo.png',       '.'),
-    ('template.docx',  '.'),
-    ('mainwindow.ui',  '.'),
+    ('logo.png',              '.'),
+    ('template.docx',         '.'),
+    ('otto_template.docx',    '.'),
+    ('thermal_template.docx', '.'),
+    ('mainwindow.ui',         '.'),
 ]
 
 # docxtpl / jinja2 templates
