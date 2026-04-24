@@ -109,6 +109,8 @@ class ThermalImagingWidget(QWidget):
         self._travel_in_checks  = {}
         self._travel_out_checks = {}
         self._confirmed         = {}
+        self._thermal_sections  = []
+        self._sections_layout   = None
 
         # Project info attributes
         self._ir_project  = None
@@ -351,6 +353,29 @@ class ThermalImagingWidget(QWidget):
         self._ase_card = _Card("ASE Reporting Add-On  (Optional)")
         self._build_ase_card(self._ase_card._body_layout)
         cl.addWidget(self._ase_card)
+
+        # ── Paragraph sections (same as Quote Generator) ──────────────────
+        _sec_hdr_row = QHBoxLayout(); _sec_hdr_row.setSpacing(12)
+        _sec_hdr_lbl = QLabel("Sections")
+        _sec_hdr_lbl.setStyleSheet(
+            f"font-size:13px; font-weight:700; color:{_RED}; margin-top:6px;")
+        _sec_hdr_row.addWidget(_sec_hdr_lbl)
+        _sec_hdr_row.addStretch()
+        _add_sec_btn = QPushButton("+ Add Section")
+        _add_sec_btn.setStyleSheet(
+            "QPushButton { background:#f4f6fa; color:#3a3a5c; border:1px solid #dde1e7;"
+            "  border-radius:4px; padding:5px 14px; font-size:11px; }"
+            "QPushButton:hover  { background:#e8ecf5; border-color:#b0b8d0; }"
+            "QPushButton:pressed { background:#dce2ef; }")
+        _add_sec_btn.clicked.connect(self._add_thermal_section)
+        _sec_hdr_row.addWidget(_add_sec_btn)
+        cl.addLayout(_sec_hdr_row)
+
+        _sections_container = QWidget()
+        self._sections_layout = QVBoxLayout(_sections_container)
+        self._sections_layout.setSpacing(8)
+        self._sections_layout.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(_sections_container)
 
         if self._compact:
             cl.addStretch()
@@ -1712,6 +1737,8 @@ class ThermalImagingWidget(QWidget):
             "version_history": ([self._version_history.item(i).text()
                                  for i in range(self._version_history.count())]
                                 if self._version_history else []),
+            # Paragraph sections
+            "sections": [s.get_data() for s in self._thermal_sections],
         }
 
     def restore_data(self, d: dict):
@@ -1786,6 +1813,62 @@ class ThermalImagingWidget(QWidget):
             self._version_history.clear()
             for _entry in d.get("version_history", []):
                 self._version_history.addItem(_entry)
+        # Paragraph sections — clear existing, then restore saved
+        for s in list(self._thermal_sections):
+            if self._sections_layout:
+                self._sections_layout.removeWidget(s)
+            s.setParent(None); s.deleteLater()
+        self._thermal_sections.clear()
+        for sec in d.get("sections", []):
+            self._add_thermal_section()
+            widget = self._thermal_sections[-1]
+            widget.header.setText(sec.get("header", ""))
+            html = sec.get("html", "")
+            if html:
+                widget.rich_editor.editor.setHtml(html)
+            else:
+                widget.rich_editor.editor.setPlainText(sec.get("text", ""))
+
+    # ── Paragraph sections ────────────────────────────────────────────────────
+
+    def _add_thermal_section(self):
+        from form_widgets import ParagraphSection
+
+        def on_remove(s):
+            if s in self._thermal_sections:
+                self._thermal_sections.remove(s)
+            if self._sections_layout:
+                self._sections_layout.removeWidget(s)
+            s.setParent(None); s.deleteLater()
+            self._renumber_thermal_sections()
+
+        section = ParagraphSection(on_remove=on_remove)
+        section._btn_up.clicked.connect(
+            lambda: self._move_thermal_section(section, -1))
+        section._btn_down.clicked.connect(
+            lambda: self._move_thermal_section(section, +1))
+        self._thermal_sections.append(section)
+        self._sections_layout.addWidget(section)
+        self._renumber_thermal_sections()
+
+    def _move_thermal_section(self, section, direction):
+        idx = self._thermal_sections.index(section)
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(self._thermal_sections):
+            return
+        self._thermal_sections[idx], self._thermal_sections[new_idx] = (
+            self._thermal_sections[new_idx], self._thermal_sections[idx])
+        for s in self._thermal_sections:
+            self._sections_layout.removeWidget(s)
+        for i, s in enumerate(self._thermal_sections):
+            self._sections_layout.insertWidget(i, s)
+            s.show()
+        self._renumber_thermal_sections()
+
+    def _renumber_thermal_sections(self):
+        for i, s in enumerate(self._thermal_sections):
+            if hasattr(s, 'update_section_label'):
+                s.update_section_label(i + 1)
 
     # ── Version control ───────────────────────────────────────────────────────
 
@@ -2152,6 +2235,27 @@ def generate_thermal_doc(data: dict, output_path: str):
                         _changed[0] = True
             except Exception:
                 pass
+
+        # Append paragraph sections
+        _sections_data = data.get("sections", [])
+        if _sections_data:
+            from doc_generator import _html_to_docx_paragraphs
+            from docx.shared import Pt as _Pt, RGBColor as _RGB
+            for _sec in _sections_data:
+                _hdr = (_sec.get("header") or "").strip()
+                if _hdr:
+                    _p = doc2.add_paragraph()
+                    _r = _p.add_run(_hdr)
+                    _r.bold = True
+                    _r.font.size = _Pt(13)
+                    _r.font.color.rgb = _RGB(0x92, 0x0d, 0x2e)
+                _html = _sec.get("html", "")
+                _txt  = _sec.get("text", "")
+                if _html and "<" in _html:
+                    _html_to_docx_paragraphs(doc2, _html)
+                elif _txt:
+                    doc2.add_paragraph(_txt)
+            _changed[0] = True
 
         if _changed[0]:
             doc2.save(output_path)
