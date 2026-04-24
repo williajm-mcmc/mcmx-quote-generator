@@ -182,11 +182,12 @@ class IBEWidget(QWidget):
 
     def __init__(self, parent=None, compact=False):
         super().__init__(parent)
-        self._schedule      = []
-        self._hotel_checks  = []   # [tech_idx][row_idx] → QCheckBox | None
-        self._tech_rows     = []
-        self._num_techs     = 1
-        self._confirmed     = {}
+        self._schedule        = []
+        self._hotel_checks    = []   # [tech_idx][row_idx] → QCheckBox | None
+        self._tech_rows       = []
+        self._num_techs       = 1
+        self._confirmed       = {}
+        self._row_hours_edits = {}   # row_idx → QLineEdit for per-day hour override
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -458,6 +459,78 @@ class IBEWidget(QWidget):
         dw_row.addStretch()
         layout.addLayout(dw_row)
 
+        # Start Day of Week + Work Hours
+        sw_row = QHBoxLayout()
+        sw_row.setSpacing(16)
+
+        sd_lbl = QLabel("Start Day:")
+        sd_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED};")
+        sd_lbl.setFixedWidth(78)
+        sw_row.addWidget(sd_lbl)
+
+        self._start_day_combo = QComboBox()
+        self._start_day_combo.setStyleSheet(
+            "QComboBox {"
+            "  font-size:12px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; border-radius:4px;"
+            "  padding:4px 10px; min-width:100px; }"
+            "QComboBox:focus { border-color:#920d2e; }"
+            "QComboBox:hover { border-color:#920d2e; }"
+            "QComboBox::drop-down {"
+            "  subcontrol-origin:padding; subcontrol-position:top right;"
+            "  width:28px; border-left:1px solid #d6c0c5;"
+            "  border-top-right-radius:4px; border-bottom-right-radius:4px;"
+            "  background:#f4f6fa; }"
+            "QComboBox::down-arrow {"
+            "  image:none; width:0; height:0;"
+            "  border-left:5px solid transparent;"
+            "  border-right:5px solid transparent;"
+            "  border-top:6px solid #920d2e; }"
+            "QComboBox QAbstractItemView {"
+            "  font-size:12px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; border-radius:4px;"
+            "  selection-background-color:#f5d0da;"
+            "  selection-color:#920d2e;"
+            "  outline:none; }"
+        )
+        for _dn in _DAY_NAMES:
+            self._start_day_combo.addItem(_dn)
+        self._start_day_combo.setCurrentIndex(0)
+        self._start_day_combo.setToolTip("First day of the first inspection week")
+        self._start_day_combo.currentIndexChanged.connect(self._mark_outlook_stale)
+        sw_row.addWidget(self._start_day_combo)
+
+        sw_row.addSpacing(24)
+
+        wh_lbl = QLabel("Work Hours:")
+        wh_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED};")
+        sw_row.addWidget(wh_lbl)
+
+        self._work_start_edit = QLineEdit("8")
+        self._work_start_edit.setFixedWidth(50)
+        self._work_start_edit.setStyleSheet(_FIELD_STYLE)
+        self._work_start_edit.setToolTip("Start hour (24h, e.g. 8 = 8 am)")
+        self._work_start_edit.setValidator(QIntValidator(0, 23))
+        sw_row.addWidget(self._work_start_edit)
+
+        wh_to = QLabel("to")
+        wh_to.setStyleSheet(f"font-size:12px; color:{_TEXT};")
+        sw_row.addWidget(wh_to)
+
+        self._work_end_edit = QLineEdit("17")
+        self._work_end_edit.setFixedWidth(50)
+        self._work_end_edit.setStyleSheet(_FIELD_STYLE)
+        self._work_end_edit.setToolTip("End hour (24h, e.g. 17 = 5 pm)")
+        self._work_end_edit.setValidator(QIntValidator(0, 24))
+        sw_row.addWidget(self._work_end_edit)
+
+        wh_note = QLabel("(24h · weekday OT × 1.5 · weekend × 2.0)")
+        wh_note.setStyleSheet(f"font-size:10px; color:{_SUBTEXT}; font-style:italic;")
+        sw_row.addWidget(wh_note)
+
+        sw_row.addStretch()
+        layout.addLayout(sw_row)
+
         # Preview strip
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -555,6 +628,7 @@ class IBEWidget(QWidget):
         cost_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED}; margin-top:4px;")
         layout.addWidget(cost_lbl)
 
+        _FORMULA_STYLE = f"font-size:9px; color:{_SUBTEXT}; font-style:italic;"
         cost_grid = QHBoxLayout(); cost_grid.setSpacing(20)
         for attr, caption in [
             ("_cost_labor",   "Labor (Work)"),
@@ -571,6 +645,12 @@ class IBEWidget(QWidget):
             val.setStyleSheet(_CALC_STYLE); val.setFixedWidth(100)
             col.addWidget(val)
             setattr(self, attr, val)
+            formula = QLabel("")
+            formula.setStyleSheet(_FORMULA_STYLE)
+            formula.setWordWrap(True)
+            formula.setMaximumWidth(130)
+            col.addWidget(formula)
+            setattr(self, attr + "_formula", formula)
             cost_grid.addLayout(col)
         cost_grid.addStretch()
         layout.addLayout(cost_grid)
@@ -818,6 +898,8 @@ class IBEWidget(QWidget):
         if panels <= 0 or hours <= 0 or not wdays:
             return
 
+        self._row_hours_edits = {}  # reset per-day hour overrides
+
         daily     = rate * hours * n
         insp_days = math.ceil(panels / daily) if daily > 0 else 0
 
@@ -829,6 +911,12 @@ class IBEWidget(QWidget):
             gap_days = 6  # only one work day per week → 6 gap days
         self._weekend_days = gap_days
 
+        # First week may start mid-week based on the chosen Start Day
+        start_day_idx = (self._start_day_combo.currentIndex()
+                         if hasattr(self, "_start_day_combo") else 0)
+        first_week_days = [wd for wd in wdays if wd >= start_day_idx]
+        if not first_week_days:
+            first_week_days = wdays  # fall back if start is after all work days
 
         # Build schedule: (day_label, activity, is_inspection, default_hotel)
         sched = []
@@ -843,24 +931,24 @@ class IBEWidget(QWidget):
             if i < len(self._tech_rows)
         )
 
-        # Travel In: day before first work day
-        travel_in_day = _DAY_NAMES[(wdays[0] - 1) % 7]
+        # Travel In: day before first inspection day
+        travel_in_day = _DAY_NAMES[(first_week_days[0] - 1) % 7]
         if _any_hotel_needed:
             sched.append((travel_in_day, "Travel In", False, True))
 
-        done     = 0
-        last_wd  = wdays[0]
+        done       = 0
+        last_wd    = first_week_days[0]
         first_week = True
         while done < insp_days:
+            week_days = first_week_days if first_week else wdays
             if not first_week and gap_days > 0:
                 sched.append(("Weekend", "— Travel Home / Return —", False, False))
             first_week = False
-            for wd in wdays:
+            for wd in week_days:
                 if done >= insp_days:
                     break
-                done   += 1
-                last_wd = wd
-                is_last = done == insp_days
+                done    += 1
+                last_wd  = wd
                 sched.append((_DAY_NAMES[wd], f"Inspection  Day {done}", True, True))
 
         # Travel Out: day after last work day
@@ -895,7 +983,7 @@ class IBEWidget(QWidget):
                 tech_info.append({"mode": "Driving", "travel_hrs": 0.0,
                                    "mileage_ow": 0.0, "flight_cost": 0.0})
 
-        headers = ["Day", "Activity"] + tech_names
+        headers = ["Day", "Activity", "Hrs"] + tech_names
         self._outlook_table.setColumnCount(len(headers))
         self._outlook_table.setHorizontalHeaderLabels(headers)
         self._outlook_table.setRowCount(len(sched))
@@ -906,17 +994,42 @@ class IBEWidget(QWidget):
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self._outlook_table.setColumnWidth(0, 95)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for c in range(2, len(headers)):
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self._outlook_table.setColumnWidth(2, 64)
+        for c in range(3, len(headers)):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.Fixed)
             self._outlook_table.setColumnWidth(c, 155)
 
         self._hotel_checks = [[None] * len(sched) for _ in range(num_techs)]
+        _default_hrs_text  = self._hours_edit.text() or "8"
 
         for r, (day_lbl, activity, is_insp, def_hotel) in enumerate(sched):
             is_weekend    = day_lbl == "Weekend"
             is_travel_in  = activity == "Travel In"
             is_travel_out = activity == "Travel Out"
             is_travel     = is_travel_in or is_travel_out
+
+            # ── Hrs column (col 2) ────────────────────────────────────────────
+            hrs_w = QWidget()
+            hrs_w.setStyleSheet("background:#f4f6fa;" if is_weekend else "background:#ffffff;")
+            hrs_l = QVBoxLayout(hrs_w)
+            hrs_l.setContentsMargins(4, 4, 4, 4)
+            hrs_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if is_insp:
+                he = QLineEdit(_default_hrs_text)
+                he.setFixedWidth(46)
+                he.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                he.setValidator(QDoubleValidator(0.5, 24.0, 1))
+                he.setStyleSheet(_FIELD_STYLE)
+                he.setToolTip("Hours worked this day (overrides default)")
+                hrs_l.addWidget(he)
+                self._row_hours_edits[r] = he
+            else:
+                _dash = QLabel("—")
+                _dash.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                _dash.setStyleSheet(f"font-size:12px; color:{_SUBTEXT};")
+                hrs_l.addWidget(_dash)
+            self._outlook_table.setCellWidget(r, 2, hrs_w)
 
             day_item = QTableWidgetItem(day_lbl)
             day_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -1080,7 +1193,7 @@ class IBEWidget(QWidget):
                         _prev_cb.toggled.connect(_on_prev_toggled)
 
                 cell_vl.addStretch()
-                self._outlook_table.setCellWidget(r, 2 + t, cell_w)
+                self._outlook_table.setCellWidget(r, 3 + t, cell_w)
 
         ROW_H = 110
         for r in range(len(sched)):
@@ -1153,9 +1266,39 @@ class IBEWidget(QWidget):
                     dm += mi_ow
                 total_drive_miles += dm
 
-        # Hours
-        hours_per_day = _n(self._hours_edit.text(), 8.0)
-        onsite_hrs    = insp_days * hours_per_day * n
+        # Hours — per-row overrides with weekday OT / weekend OT calculation
+        _DAY_IDX      = {name: i for i, name in enumerate(_DAY_NAMES)}
+        work_start    = _n(self._work_start_edit.text()
+                           if hasattr(self, "_work_start_edit") else "8",  8.0)
+        work_end      = _n(self._work_end_edit.text()
+                           if hasattr(self, "_work_end_edit")   else "17", 17.0)
+        normal_window = max(0.0, work_end - work_start)   # e.g. 9.0 for 8–17
+        default_hrs   = _n(self._hours_edit.text(), 8.0)
+
+        regular_hrs = 0.0   # weekday within normal window
+        ot_hrs      = 0.0   # weekday outside normal window  (× 1.5)
+        weekend_hrs = 0.0   # Saturday / Sunday              (× 2.0)
+
+        for r_idx, (dl, act, is_insp, _) in enumerate(self._schedule):
+            if not is_insp:
+                continue
+            _he = self._row_hours_edits.get(r_idx)
+            if _he is not None:
+                try:
+                    day_hrs = float(_he.text() or str(default_hrs))
+                except Exception:
+                    day_hrs = default_hrs
+            else:
+                day_hrs = default_hrs
+            is_wknd = _DAY_IDX.get(dl, 0) >= 5   # Sat = 5, Sun = 6
+            for _t in range(n):
+                if is_wknd:
+                    weekend_hrs += day_hrs
+                else:
+                    regular_hrs += min(day_hrs, normal_window)
+                    ot_hrs      += max(0.0, day_hrs - normal_window)
+
+        onsite_hrs = regular_hrs + ot_hrs + weekend_hrs
         travel_hrs    = 0.0
         for i in range(min(n, len(self._tech_rows))):
             t_hrs = _n(self._tech_rows[i]["travel"].text())
@@ -1199,21 +1342,30 @@ class IBEWidget(QWidget):
                 if ti_hotel:   flight_total += fc
                 if last_hotel: flight_total += fc
 
-        # Cost breakdown
-        labor_cost  = onsite_hrs        * self.LABOR_RATE
-        travel_cost = travel_hrs        * self.TRAVEL_RATE
-        hotel_cost  = total_hotel       * self.HOTEL_RATE
-        meal_cost   = total_meals       * self.MEAL_RATE
-        mile_cost   = total_drive_miles * self.MILE_RATE
+        # Cost breakdown (OT-aware labor)
+        _lr = self.LABOR_RATE
+        _tr = self.TRAVEL_RATE
+        _hr = self.HOTEL_RATE
+        _mr = self.MEAL_RATE
+        _mi = self.MILE_RATE
+        labor_cost  = (regular_hrs * _lr +
+                       ot_hrs      * _lr * 1.5 +
+                       weekend_hrs * _lr * 2.0)
+        travel_cost = travel_hrs        * _tr
+        hotel_cost  = total_hotel       * _hr
+        meal_cost   = total_meals       * _mr
+        mile_cost   = total_drive_miles * _mi
 
         self._confirmed = {
-            "insp_days":    insp_days,   "hotel_nights": total_hotel,
-            "meals":        total_meals, "flights":       flights,
+            "insp_days":    insp_days,   "hotel_nights":  total_hotel,
+            "meals":        total_meals, "flights":        flights,
             "drive_miles":  total_drive_miles, "onsite_hrs": onsite_hrs,
             "travel_hrs":   travel_hrs,
-            "labor_cost":   labor_cost,  "travel_cost":  travel_cost,
-            "hotel_cost":   hotel_cost,  "meal_cost":    meal_cost,
-            "mile_cost":    mile_cost,   "flight_total": flight_total,
+            "regular_hrs":  regular_hrs, "ot_hrs":        ot_hrs,
+            "weekend_hrs":  weekend_hrs,
+            "labor_cost":   labor_cost,  "travel_cost":   travel_cost,
+            "hotel_cost":   hotel_cost,  "meal_cost":     meal_cost,
+            "mile_cost":    mile_cost,   "flight_total":  flight_total,
         }
 
         self._sum_insp.setText(str(insp_days))
@@ -1223,11 +1375,36 @@ class IBEWidget(QWidget):
         self._sum_miles.setText(f"{total_drive_miles:,.0f}")
 
         self._cost_labor.setText(f"${labor_cost:,.2f}")
+        if hasattr(self, "_cost_labor_formula"):
+            _parts = []
+            if regular_hrs > 0:
+                _parts.append(f"{regular_hrs:.1f}h × ${_lr:,.0f}")
+            if ot_hrs > 0:
+                _parts.append(f"{ot_hrs:.1f}h × ${_lr * 1.5:,.0f} (OT)")
+            if weekend_hrs > 0:
+                _parts.append(f"{weekend_hrs:.1f}h × ${_lr * 2.0:,.0f} (wknd)")
+            self._cost_labor_formula.setText(" + ".join(_parts) if _parts
+                                              else f"{onsite_hrs:.1f} hrs × ${_lr:,.0f}/hr")
         self._cost_travel.setText(f"${travel_cost:,.2f}")
+        if hasattr(self, "_cost_travel_formula"):
+            self._cost_travel_formula.setText(
+                f"{travel_hrs:.1f} hrs × ${_tr:,.0f}/hr" if travel_hrs else "—")
         self._cost_hotel.setText(f"${hotel_cost:,.2f}")
+        if hasattr(self, "_cost_hotel_formula"):
+            self._cost_hotel_formula.setText(
+                f"{total_hotel} night{'s' if total_hotel != 1 else ''} × ${_hr:,.0f}/night")
         self._cost_meals.setText(f"${meal_cost:,.2f}")
+        if hasattr(self, "_cost_meals_formula"):
+            self._cost_meals_formula.setText(
+                f"{total_meals} meal{'s' if total_meals != 1 else ''} × ${_mr:,.0f}/meal")
         self._cost_miles.setText(f"${mile_cost:,.2f}")
+        if hasattr(self, "_cost_miles_formula"):
+            self._cost_miles_formula.setText(
+                f"{total_drive_miles:,.0f} mi × ${_mi:.3f}/mi" if total_drive_miles else "—")
         self._cost_flights.setText(f"${flight_total:,.2f}")
+        if hasattr(self, "_cost_flights_formula"):
+            self._cost_flights_formula.setText(
+                f"{flights} flight{'s' if flights != 1 else ''}" if flights else "—")
 
         self._summary_card.setVisible(True)
         self._recalc_cost_totals()
@@ -1264,6 +1441,9 @@ class IBEWidget(QWidget):
         self._confirmed["meals"] = new_meals
         self._confirmed["meal_cost"] = new_meal_cost
         self._cost_meals.setText(f"${new_meal_cost:,.2f}")
+        if hasattr(self, "_cost_meals_formula"):
+            self._cost_meals_formula.setText(
+                f"{new_meals} meal{'s' if new_meals != 1 else ''} × ${self.MEAL_RATE:,.0f}/meal")
         self._recalc_cost_totals()
 
     def _adj_margin(self, delta: int):
@@ -1313,6 +1493,12 @@ class IBEWidget(QWidget):
             "tech_flight_costs": [r["flight_cost"].text()   for r in self._tech_rows],
             "tech_mileages":     [r["mileage"].text()       for r in self._tech_rows],
             "work_days":         [i for i, cb in enumerate(self._day_checks) if cb.isChecked()],
+            "start_day":         (self._start_day_combo.currentIndex()
+                                  if hasattr(self, "_start_day_combo") else 0),
+            "work_start":        (self._work_start_edit.text()
+                                  if hasattr(self, "_work_start_edit") else "8"),
+            "work_end":          (self._work_end_edit.text()
+                                  if hasattr(self, "_work_end_edit") else "17"),
             # Schedule state (populated after Generate / Confirm)
             "schedule":      [(dl, act, insp, dh) for dl, act, insp, dh in self._schedule],
             "hotel_states":  hotel_states,
@@ -1354,6 +1540,12 @@ class IBEWidget(QWidget):
         wd = set(d.get("work_days", [0, 1, 2, 3, 4]))
         for i, cb in enumerate(self._day_checks):
             cb.setChecked(i in wd)
+        if hasattr(self, "_start_day_combo"):
+            self._start_day_combo.setCurrentIndex(int(d.get("start_day", 0)))
+        if hasattr(self, "_work_start_edit"):
+            self._work_start_edit.setText(str(d.get("work_start", "8")))
+        if hasattr(self, "_work_end_edit"):
+            self._work_end_edit.setText(str(d.get("work_end", "17")))
         self._recalc_preview()
         if hasattr(self, "_margin_lbl"):
             self._margin_lbl.setText(str(d.get("margin", "0.0")))
