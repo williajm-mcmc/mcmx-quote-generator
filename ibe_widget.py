@@ -322,11 +322,23 @@ class IBEWidget(QWidget):
         if not path:
             return
         try:
-            _export_ibe_excel(self.get_data(), path,
+            _data = self.get_data()
+            _export_ibe_excel(_data, path,
                               hotel_rate=self.HOTEL_RATE,
                               meal_rate=self.MEAL_RATE,
                               mile_rate=self.MILE_RATE)
-            QMessageBox.information(self, "Exported", f"✔  Saved:\n{path}")
+            _mcmxi_path = os.path.splitext(path)[0] + ".mcmxi"
+            try:
+                with open(_mcmxi_path, "w", encoding="utf-8") as _mf:
+                    json.dump(_data, _mf, indent=2, ensure_ascii=False)
+                QMessageBox.information(
+                    self, "Exported",
+                    f"✔  Excel saved:\n{path}\n\nProject saved:\n{_mcmxi_path}")
+            except Exception as _me:
+                QMessageBox.warning(
+                    self, "Project Save Warning",
+                    f"Excel exported but .mcmxi could not be saved:\n{_me}")
+                QMessageBox.information(self, "Exported", f"✔  Excel saved:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", str(e))
 
@@ -560,9 +572,12 @@ class IBEWidget(QWidget):
             "Set end before start for overnight shifts (e.g. 10:00 PM → 8:00 AM).")
         sw_row.addWidget(self._work_end_combo)
 
-        wh_note = QLabel("(weekday OT × 1.5 · overnight & weekend × 2.0)")
-        wh_note.setStyleSheet(f"font-size:10px; color:{_SUBTEXT}; font-style:italic;")
-        sw_row.addWidget(wh_note)
+        self._wh_window_lbl = QLabel("")
+        self._wh_window_lbl.setStyleSheet(f"font-size:10px; color:{_SUBTEXT}; font-style:italic;")
+        sw_row.addWidget(self._wh_window_lbl)
+        self._work_start_combo.currentIndexChanged.connect(self._update_wh_window_lbl)
+        self._work_end_combo.currentIndexChanged.connect(self._update_wh_window_lbl)
+        self._update_wh_window_lbl()
 
         sw_row.addStretch()
         layout.addLayout(sw_row)
@@ -1037,7 +1052,18 @@ class IBEWidget(QWidget):
             self._outlook_table.setColumnWidth(c, 155)
 
         self._hotel_checks = [[None] * len(sched) for _ in range(num_techs)]
-        _default_hrs_text  = self._hours_edit.text() or "8"
+
+        # Default hours for each inspection row = work window duration,
+        # falling back to the Hours/Day field if the window is 0 or undefined.
+        if hasattr(self, "_work_start_combo") and hasattr(self, "_work_end_combo"):
+            _ws = self._work_start_combo.currentIndex()
+            _we = self._work_end_combo.currentIndex()
+            if _we > _ws:   _win_hrs = _we - _ws
+            elif _we < _ws: _win_hrs = 24 - _ws + _we
+            else:           _win_hrs = 0
+            _default_hrs_text = str(_win_hrs) if _win_hrs > 0 else (self._hours_edit.text() or "8")
+        else:
+            _default_hrs_text = self._hours_edit.text() or "8"
 
         for r, (day_lbl, activity, is_insp, def_hotel) in enumerate(sched):
             is_weekend    = day_lbl == "Weekend"
@@ -1494,6 +1520,23 @@ class IBEWidget(QWidget):
         v = max(0.0, min(99.9, v + delta))
         self._margin_lbl.setText(f"{v:.1f}")
 
+    def _update_wh_window_lbl(self):
+        """Recompute and display the work-window duration next to the time dropdowns."""
+        if not hasattr(self, "_work_start_combo") or not hasattr(self, "_wh_window_lbl"):
+            return
+        s = self._work_start_combo.currentIndex()
+        e = self._work_end_combo.currentIndex()
+        if e > s:
+            hrs = e - s
+            self._wh_window_lbl.setText(
+                f"= {hrs}h/day  ·  weekday OT × 1.5  ·  weekend × 2.0")
+        elif e < s:
+            hrs = 24 - s + e
+            self._wh_window_lbl.setText(
+                f"= {hrs}h overnight (end is next day)  ·  weekday OT × 1.5  ·  weekend × 2.0")
+        else:
+            self._wh_window_lbl.setText("= 0h window — every hour counts as OT")
+
     def _mark_outlook_stale(self, *_):
         self._confirmed = {}
         if hasattr(self, "_confirm_btn"):
@@ -1541,6 +1584,8 @@ class IBEWidget(QWidget):
                                   if hasattr(self, "_work_start_combo") else 8),
             "work_end":          (self._work_end_combo.currentIndex()
                                   if hasattr(self, "_work_end_combo")   else 17),
+            "row_hours":         {str(r): (he.text() or "")
+                                  for r, he in self._row_hours_edits.items()},
             # Schedule state (populated after Generate / Confirm)
             "schedule":      [(dl, act, insp, dh) for dl, act, insp, dh in self._schedule],
             "hotel_states":  hotel_states,
@@ -1736,9 +1781,21 @@ def _export_ibe_excel(data: dict, path: str,
 
     # Config line
     ws.cell(sr, 1, f"IBE Level {ibe_lvl}  —  {ibe_rate_v:g} panels/hr").font = _font(bold=True)
+    _ws_h = int(data.get("work_start", 8))
+    _we_h = int(data.get("work_end",   17))
+    def _fmt_h(h):
+        if h == 0:  return "12:00 AM"
+        if h < 12:  return f"{h}:00 AM"
+        if h == 12: return "12:00 PM"
+        return f"{h - 12}:00 PM"
+    if _we_h > _ws_h:   _wh_info = f"{_we_h - _ws_h}h/day"
+    elif _we_h < _ws_h: _wh_info = f"{24 - _ws_h + _we_h}h overnight"
+    else:               _wh_info = "all OT"
     ws.cell(sr, 2,
-        f"{data.get('panels','?')} panels   {data.get('hours','?')} hrs/day"
-        f"   {n_techs} technician(s)"
+        f"{data.get('panels','?')} panels   "
+        f"{n_techs} technician(s)   "
+        f"Work Hours: {_fmt_h(_ws_h)} – {_fmt_h(_we_h)} ({_wh_info})   "
+        f"OT: weekday × 1.5  ·  Weekend: × 2.0"
     ).font = _font()
     ws.row_dimensions[sr].height = 16; sr += 1
 
@@ -1775,10 +1832,16 @@ def _export_ibe_excel(data: dict, path: str,
     ws.row_dimensions[sr].height = 30; sr += 1
 
     # Row data
-    total_panels_f      = _num_s(data.get("panels", "0"))
-    hours_day_f         = _num_s(data.get("hours",  "8"))
-    panels_per_insp_day = ibe_rate_v * hours_day_f * n_techs
-    cum_panels          = 0.0
+    total_panels_f = _num_s(data.get("panels", "0"))
+    # Default hours from the work window, falling back to the Hours/Day field
+    _ws_idx = int(data.get("work_start", 8))
+    _we_idx = int(data.get("work_end",   17))
+    if _we_idx > _ws_idx:   _win_hrs_f = float(_we_idx - _ws_idx)
+    elif _we_idx < _ws_idx: _win_hrs_f = float(24 - _ws_idx + _we_idx)
+    else:                   _win_hrs_f = _num_s(data.get("hours", "8"))
+    hours_day_f    = _win_hrs_f if _win_hrs_f > 0 else _num_s(data.get("hours", "8"))
+    row_hours_dict = data.get("row_hours", {})   # per-row overrides
+    cum_panels     = 0.0
 
     def _blank_acc():
         return [{"t_hrs": 0.0, "miles": 0.0, "mile_cost": 0.0,
@@ -1851,7 +1914,10 @@ def _export_ibe_excel(data: dict, path: str,
         ac.fill = _fill(row_bg)
 
         if is_insp:
-            cum_panels = min(cum_panels + panels_per_insp_day, total_panels_f)
+            _rh_txt = row_hours_dict.get(str(ri), "")
+            try:    _row_hrs = float(_rh_txt) if _rh_txt else hours_day_f
+            except: _row_hrs = hours_day_f
+            cum_panels = min(cum_panels + ibe_rate_v * _row_hrs * n_techs, total_panels_f)
             pct = (cum_panels / total_panels_f * 100) if total_panels_f > 0 else 0
             pd_c  = ws.cell(sr, 3, f"{int(round(cum_panels)):,}")
             pct_c = ws.cell(sr, 4, f"{min(pct, 100.0):.1f}%")
@@ -1894,11 +1960,19 @@ def _export_ibe_excel(data: dict, path: str,
                 grand_acc[ti]["miles"]     += rt_mi
                 grand_acc[ti]["mile_cost"] += mi_cost
                 fills = ["F2F4F8"] * PER_T
+
+            elif is_travel and not hotel_booked:
+                # Local tech — no dedicated travel day; nothing to show
+                vals  = ["—"] * PER_T
+                fills = [data_bg] * PER_T
+
             else:
                 if is_travel:
+                    # Overnight tech travelling in/out
                     row_t  = t_hrs
                     row_mi = ow_mi if not flying else 0.0
                 elif is_insp and not hotel_booked and not flying:
+                    # Local commuter: round-trip each day
                     row_t  = t_hrs * 2
                     row_mi = ow_mi * 2
                 else:
