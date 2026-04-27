@@ -506,25 +506,61 @@ class IBEWidget(QWidget):
         wh_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED};")
         sw_row.addWidget(wh_lbl)
 
-        self._work_start_edit = QLineEdit("8")
-        self._work_start_edit.setFixedWidth(50)
-        self._work_start_edit.setStyleSheet(_FIELD_STYLE)
-        self._work_start_edit.setToolTip("Start hour (24h, e.g. 8 = 8 am)")
-        self._work_start_edit.setValidator(QIntValidator(0, 23))
-        sw_row.addWidget(self._work_start_edit)
+        _TIME_COMBO_STYLE = (
+            "QComboBox {"
+            "  font-size:11px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; border-radius:4px;"
+            "  padding:3px 8px; min-width:90px; }"
+            "QComboBox:focus { border-color:#920d2e; }"
+            "QComboBox:hover { border-color:#920d2e; }"
+            "QComboBox::drop-down {"
+            "  subcontrol-origin:padding; subcontrol-position:top right;"
+            "  width:22px; border-left:1px solid #d6c0c5;"
+            "  border-top-right-radius:4px; border-bottom-right-radius:4px;"
+            "  background:#f4f6fa; }"
+            "QComboBox::down-arrow {"
+            "  image:none; width:0; height:0;"
+            "  border-left:5px solid transparent;"
+            "  border-right:5px solid transparent;"
+            "  border-top:6px solid #920d2e; }"
+            "QComboBox QAbstractItemView {"
+            "  font-size:11px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; selection-background-color:#f5d0da;"
+            "  selection-color:#920d2e; outline:none; }"
+        )
+
+        def _hour_lbl(h):
+            if h == 0:  return "12:00 AM"
+            if h < 12:  return f"{h}:00 AM"
+            if h == 12: return "12:00 PM"
+            return f"{h - 12}:00 PM"
+
+        self._work_start_combo = QComboBox()
+        self._work_start_combo.setStyleSheet(_TIME_COMBO_STYLE)
+        for _h in range(24):
+            self._work_start_combo.addItem(_hour_lbl(_h), _h)
+        self._work_start_combo.setCurrentIndex(8)   # 8:00 AM
+        self._work_start_combo.setToolTip(
+            "Shift start time.\n"
+            "Weekday hours before this are overtime (× 1.5).")
+        sw_row.addWidget(self._work_start_combo)
 
         wh_to = QLabel("to")
         wh_to.setStyleSheet(f"font-size:12px; color:{_TEXT};")
         sw_row.addWidget(wh_to)
 
-        self._work_end_edit = QLineEdit("17")
-        self._work_end_edit.setFixedWidth(50)
-        self._work_end_edit.setStyleSheet(_FIELD_STYLE)
-        self._work_end_edit.setToolTip("End hour (24h, e.g. 17 = 5 pm)")
-        self._work_end_edit.setValidator(QIntValidator(0, 24))
-        sw_row.addWidget(self._work_end_edit)
+        self._work_end_combo = QComboBox()
+        self._work_end_combo.setStyleSheet(_TIME_COMBO_STYLE)
+        for _h in range(24):
+            self._work_end_combo.addItem(_hour_lbl(_h), _h)
+        self._work_end_combo.setCurrentIndex(17)    # 5:00 PM
+        self._work_end_combo.setToolTip(
+            "Shift end time.\n"
+            "Weekday hours after this are overtime (× 1.5).\n"
+            "Set end before start for overnight shifts (e.g. 10:00 PM → 8:00 AM).")
+        sw_row.addWidget(self._work_end_combo)
 
-        wh_note = QLabel("(24h · weekday OT × 1.5 · weekend × 2.0)")
+        wh_note = QLabel("(weekday OT × 1.5 · overnight & weekend × 2.0)")
         wh_note.setStyleSheet(f"font-size:10px; color:{_SUBTEXT}; font-style:italic;")
         sw_row.addWidget(wh_note)
 
@@ -1268,11 +1304,17 @@ class IBEWidget(QWidget):
 
         # Hours — per-row overrides with weekday OT / weekend OT calculation
         _DAY_IDX      = {name: i for i, name in enumerate(_DAY_NAMES)}
-        work_start    = _n(self._work_start_edit.text()
-                           if hasattr(self, "_work_start_edit") else "8",  8.0)
-        work_end      = _n(self._work_end_edit.text()
-                           if hasattr(self, "_work_end_edit")   else "17", 17.0)
-        normal_window = max(0.0, work_end - work_start)   # e.g. 9.0 for 8–17
+        work_start_h  = (self._work_start_combo.currentIndex()
+                         if hasattr(self, "_work_start_combo") else 8)
+        work_end_h    = (self._work_end_combo.currentIndex()
+                         if hasattr(self, "_work_end_combo")   else 17)
+        # Overnight shift: end ≤ start wraps past midnight (e.g. 10 PM → 8 AM = 10 h)
+        if work_end_h > work_start_h:
+            normal_window = float(work_end_h - work_start_h)
+        elif work_end_h < work_start_h:
+            normal_window = float(24 - work_start_h + work_end_h)
+        else:
+            normal_window = 0.0   # same time — every hour is OT
         default_hrs   = _n(self._hours_edit.text(), 8.0)
 
         regular_hrs = 0.0   # weekday within normal window
@@ -1495,10 +1537,10 @@ class IBEWidget(QWidget):
             "work_days":         [i for i, cb in enumerate(self._day_checks) if cb.isChecked()],
             "start_day":         (self._start_day_combo.currentIndex()
                                   if hasattr(self, "_start_day_combo") else 0),
-            "work_start":        (self._work_start_edit.text()
-                                  if hasattr(self, "_work_start_edit") else "8"),
-            "work_end":          (self._work_end_edit.text()
-                                  if hasattr(self, "_work_end_edit") else "17"),
+            "work_start":        (self._work_start_combo.currentIndex()
+                                  if hasattr(self, "_work_start_combo") else 8),
+            "work_end":          (self._work_end_combo.currentIndex()
+                                  if hasattr(self, "_work_end_combo")   else 17),
             # Schedule state (populated after Generate / Confirm)
             "schedule":      [(dl, act, insp, dh) for dl, act, insp, dh in self._schedule],
             "hotel_states":  hotel_states,
@@ -1542,10 +1584,10 @@ class IBEWidget(QWidget):
             cb.setChecked(i in wd)
         if hasattr(self, "_start_day_combo"):
             self._start_day_combo.setCurrentIndex(int(d.get("start_day", 0)))
-        if hasattr(self, "_work_start_edit"):
-            self._work_start_edit.setText(str(d.get("work_start", "8")))
-        if hasattr(self, "_work_end_edit"):
-            self._work_end_edit.setText(str(d.get("work_end", "17")))
+        if hasattr(self, "_work_start_combo"):
+            self._work_start_combo.setCurrentIndex(int(d.get("work_start", 8)))
+        if hasattr(self, "_work_end_combo"):
+            self._work_end_combo.setCurrentIndex(int(d.get("work_end", 17)))
         self._recalc_preview()
         if hasattr(self, "_margin_lbl"):
             self._margin_lbl.setText(str(d.get("margin", "0.0")))
