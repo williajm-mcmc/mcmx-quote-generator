@@ -4,6 +4,9 @@ import os as _os
 import os
 from datetime import date
 
+# ── Application version (must match the latest Git release tag) ───────────────
+APP_VERSION = "2.0.8"
+
 
 def _resource_path(relative):
     """Return absolute path to a bundled resource, works for PyInstaller and dev."""
@@ -293,6 +296,50 @@ class _ContactWidget(QWidget):
         pass
 
 
+# ── Update background workers ─────────────────────────────────────────────────
+
+from PyQt6.QtCore import QThread, pyqtSignal as _Signal
+
+class _UpdateChecker(QThread):
+    """Queries GitHub in the background; emits result_ready(dict|None) or error(str)."""
+    result_ready = _Signal(object)
+    error        = _Signal(str)
+
+    def __init__(self, current_version: str, parent=None):
+        super().__init__(parent)
+        self._ver = current_version
+
+    def run(self):
+        try:
+            from updater import check_for_update
+            self.result_ready.emit(check_for_update(self._ver))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class _Downloader(QThread):
+    """Downloads the update zip in the background."""
+    progress = _Signal(int, int)   # bytes_done, total_bytes
+    done     = _Signal(str)        # zip_path on success
+    error    = _Signal(str)
+
+    def __init__(self, url: str, dest_path: str, parent=None):
+        super().__init__(parent)
+        self._url  = url
+        self._dest = dest_path
+
+    def run(self):
+        try:
+            from updater import download_zip
+            download_zip(
+                self._url, self._dest,
+                progress_cb=lambda d, t: self.progress.emit(d, t),
+            )
+            self.done.emit(self._dest)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -301,13 +348,24 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(APP_STYLE)
         self.setMinimumSize(700, 480)  # allow vertical resizing on small screens
 
-        # ── App version label (bottom-right) ──────────────────────────
-        _ver_lbl = QLabel("V2.0")
-        _ver_lbl.setStyleSheet(
-            "QLabel { color:#b0a0a4; font-size:10px; padding:0 6px 2px 0; }")
-        self.statusBar().addPermanentWidget(_ver_lbl)
+        # ── Status bar — version label + update button ────────────────
         self.statusBar().setStyleSheet(
             "QStatusBar { background:#f9f4f5; border-top:1px solid #e8dde0; }")
+
+        _upd_btn = QPushButton("⟳  Check for Updates")
+        _upd_btn.setStyleSheet(
+            "QPushButton { background:transparent; color:#920d2e;"
+            "  border:none; font-size:10px; font-weight:600; padding:0 8px 2px 0; }"
+            "QPushButton:hover { color:#7a0b27; text-decoration:underline; }"
+        )
+        _upd_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        _upd_btn.clicked.connect(lambda: self._check_for_updates(silent=False))
+        self.statusBar().addPermanentWidget(_upd_btn)
+
+        _ver_lbl = QLabel(f"v{APP_VERSION}")
+        _ver_lbl.setStyleSheet(
+            "QLabel { color:#b0a0a4; font-size:10px; padding:0 6px 2px 4px; }")
+        self.statusBar().addPermanentWidget(_ver_lbl)
 
         # ── Menu bar ──────────────────────────────────────────────────
         from PyQt6.QtWidgets import QMenuBar
@@ -373,6 +431,15 @@ class MainWindow(QMainWindow):
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
+
+        help_menu = menubar.addMenu("Help")
+        _a_upd = QAction("⟳  Check for Updates…", self)
+        _a_upd.triggered.connect(lambda: self._check_for_updates(silent=False))
+        help_menu.addAction(_a_upd)
+        help_menu.addSeparator()
+        _a_about = QAction(f"About  (v{APP_VERSION})", self)
+        _a_about.triggered.connect(self._show_about)
+        help_menu.addAction(_a_about)
 
         # Set margins and spacing in code (contentsMargins not supported by uic)
         self.centralwidget.layout().setContentsMargins(20, 16, 20, 16)
@@ -1172,6 +1239,203 @@ class MainWindow(QMainWindow):
                 top.setFont(0, _bold_aptos)
                 top.setForeground(0, _QC('#920d2e'))
                 self._toc_tree.addTopLevelItem(top)
+
+    # ── Auto-update ───────────────────────────────────────────────────────────
+
+    def _check_for_updates(self, silent: bool = False):
+        """
+        Launch a background thread to query GitHub for a newer release.
+        If *silent* is True, do nothing when already on the latest version.
+        """
+        self.statusBar().showMessage("Checking for updates…", 8000)
+        self._update_checker = _UpdateChecker(APP_VERSION, parent=self)
+        self._update_checker.result_ready.connect(
+            lambda info: self._on_update_checked(info, silent))
+        self._update_checker.error.connect(
+            lambda err:  self._on_update_error(err, silent))
+        self._update_checker.start()
+
+    def _on_update_checked(self, info, silent: bool):
+        self.statusBar().clearMessage()
+        if info is None:
+            if not silent:
+                _msg(self, "info", "Up to Date",
+                     f"You are running the latest version  (v{APP_VERSION}).\n"
+                     "No update is available.")
+            return
+        self._prompt_update(info)
+
+    def _on_update_error(self, err: str, silent: bool):
+        self.statusBar().clearMessage()
+        if not silent:
+            _msg(self, "warn", "Update Check Failed",
+                 f"Could not reach GitHub to check for updates:\n\n{err}")
+
+    def _prompt_update(self, info: dict):
+        """Show a dialog describing the new release and offer to install it."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QTextEdit, QPushButton, QDialogButtonBox,
+        )
+        tag  = info["tag"]
+        url  = info["download_url"]
+        body = (info.get("body") or "").strip()
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Update Available")
+        dlg.setMinimumWidth(460)
+        dlg.setStyleSheet(
+            "QDialog  { background:#ffffff; }"
+            "QLabel   { color:#1a0509; font-size:12px; }"
+            "QTextEdit{ background:#f9f9fb; border:1px solid #d6c0c5;"
+            "  border-radius:4px; font-size:11px; color:#1a0509; padding:6px; }"
+        )
+        vbox = QVBoxLayout(dlg)
+        vbox.setSpacing(12)
+        vbox.setContentsMargins(18, 16, 18, 16)
+
+        hdr = QLabel(
+            f"<span style='font-size:14px;font-weight:700;color:#920d2e;'>"
+            f"Version {tag} is available</span><br>"
+            f"<span style='font-size:11px;color:#3a3a5c;'>You are on v{APP_VERSION}</span>"
+        )
+        hdr.setTextFormat(Qt.TextFormat.RichText)
+        vbox.addWidget(hdr)
+
+        if body:
+            notes = QTextEdit()
+            notes.setReadOnly(True)
+            notes.setPlainText(body)
+            notes.setFixedHeight(160)
+            vbox.addWidget(notes)
+
+        from updater import is_bundled
+        import platform as _pl
+        _is_win = _pl.system() == "Windows"
+        _bundled = is_bundled()
+
+        if _bundled and _is_win:
+            info_lbl = QLabel(
+                "The app will download the update, then close and restart automatically.")
+        else:
+            info_lbl = QLabel(
+                "The update will be downloaded. Replace the app folder manually to apply it.")
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet("font-size:11px; color:#3a3a5c;")
+        vbox.addWidget(info_lbl)
+
+        btn_box = QDialogButtonBox()
+        _ok_btn = btn_box.addButton("Update Now", QDialogButtonBox.ButtonRole.AcceptRole)
+        _ok_btn.setStyleSheet(
+            "QPushButton { background:#920d2e; color:#ffffff; border:none;"
+            "  border-radius:4px; padding:7px 20px; font-size:12px; font-weight:700; }"
+            "QPushButton:hover { background:#7a0b27; }"
+        )
+        _cancel = btn_box.addButton("Later", QDialogButtonBox.ButtonRole.RejectRole)
+        _cancel.setStyleSheet(
+            "QPushButton { background:#f4f6fa; color:#3a3a5c;"
+            "  border:1px solid #c8cedd; border-radius:4px;"
+            "  padding:7px 20px; font-size:12px; }"
+            "QPushButton:hover { background:#e0e4ef; }"
+        )
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+        vbox.addWidget(btn_box)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._download_update(url)
+
+    def _download_update(self, url: str):
+        """Download the update zip with a progress dialog, then apply."""
+        import tempfile
+        from PyQt6.QtWidgets import QProgressDialog
+
+        zip_path = os.path.join(tempfile.gettempdir(), "mcmx_update.zip")
+
+        prog = QProgressDialog("Downloading update…", "Cancel", 0, 100, self)
+        prog.setWindowTitle("MCMX Updater")
+        prog.setMinimumWidth(380)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+        prog.setStyleSheet(
+            "QProgressDialog { background:#ffffff; }"
+            "QLabel { color:#1a0509; font-size:12px; }"
+            "QProgressBar { border:1px solid #d6c0c5; border-radius:4px;"
+            "  background:#f4f6fa; height:14px; }"
+            "QProgressBar::chunk { background:#920d2e; border-radius:3px; }"
+            "QPushButton { background:#f4f6fa; color:#3a3a5c;"
+            "  border:1px solid #d6c0c5; border-radius:4px;"
+            "  padding:5px 16px; font-size:12px; }"
+            "QPushButton:hover { background:#e0e4ef; }"
+        )
+        prog.setMinimumDuration(0)
+        prog.setValue(0)
+
+        self._downloader = _Downloader(url, zip_path, parent=self)
+
+        def _on_progress(done: int, total: int):
+            if prog.wasCanceled():
+                return
+            if total > 0:
+                prog.setValue(int(done * 100 / total))
+                kb_done  = done  // 1024
+                kb_total = total // 1024
+                prog.setLabelText(
+                    f"Downloading update…  {kb_done:,} / {kb_total:,} KB")
+            else:
+                prog.setLabelText(f"Downloading…  {done // 1024:,} KB")
+
+        def _on_done(path: str):
+            prog.close()
+            self._apply_update(path)
+
+        def _on_error(err: str):
+            prog.close()
+            _msg(self, "crit", "Download Failed",
+                 f"Could not download the update:\n\n{err}")
+
+        self._downloader.progress.connect(_on_progress)
+        self._downloader.done.connect(_on_done)
+        self._downloader.error.connect(_on_error)
+        prog.canceled.connect(self._downloader.terminate)
+        self._downloader.start()
+
+    def _apply_update(self, zip_path: str):
+        """Extract the downloaded zip and swap files (Windows bundled only)."""
+        from updater import apply_update_windows, is_bundled
+        import platform as _pl
+        from PyQt6.QtWidgets import QApplication
+
+        if not is_bundled():
+            _msg(self, "info", "Dev Mode — Manual Apply",
+                 f"Update zip saved to:\n{zip_path}\n\n"
+                 "Extract the zip and replace the app folder to finish the update.")
+            return
+
+        if _pl.system() != "Windows":
+            _msg(self, "info", "Manual Apply Required",
+                 f"Update downloaded to:\n{zip_path}\n\n"
+                 "Replace the app bundle with the contents of the zip to finish.")
+            return
+
+        try:
+            apply_update_windows(zip_path, sys.executable)
+        except Exception as exc:
+            _msg(self, "crit", "Update Failed",
+                 f"Could not apply the update:\n\n{exc}")
+            return
+
+        # Updater batch script will restart the app — quit now
+        _msg(self, "info", "Restarting…",
+             "The app will close and restart with the new version.\n"
+             "Please wait a moment after it closes.")
+        QApplication.quit()
+
+    def _show_about(self):
+        _msg(self, "info", "About MCMX Proposal Creator",
+             f"McNaughton-McKay Proposal Creator\n"
+             f"Version  v{APP_VERSION}\n\n"
+             f"Built with PyQt6 · python-docx · docxtpl\n"
+             f"© McNaughton-McKay Electric Co.")
 
     def generate_document(self):
         if not self.lineEdit_project.text().strip():

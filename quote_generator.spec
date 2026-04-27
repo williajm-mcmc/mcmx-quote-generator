@@ -28,6 +28,7 @@ added_datas += collect_data_files('jinja2')
 
 # ── Hidden imports ────────────────────────────────────────────────────────────
 hidden = [
+    'updater',                # auto-update helper (imported inside method bodies)
     'PyQt6.QtPrintSupport',   # required by some Qt widgets at runtime
     'docx',
     'docx.oxml',
