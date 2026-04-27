@@ -432,14 +432,7 @@ class MainWindow(QMainWindow):
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
 
-        help_menu = menubar.addMenu("Help")
-        _a_upd = QAction("⟳  Check for Updates…", self)
-        _a_upd.triggered.connect(lambda: self._check_for_updates(silent=False))
-        help_menu.addAction(_a_upd)
-        help_menu.addSeparator()
-        _a_about = QAction(f"About  (v{APP_VERSION})", self)
-        _a_about.triggered.connect(self._show_about)
-        help_menu.addAction(_a_about)
+
 
         # Set margins and spacing in code (contentsMargins not supported by uic)
         self.centralwidget.layout().setContentsMargins(20, 16, 20, 16)
