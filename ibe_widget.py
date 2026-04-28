@@ -324,6 +324,8 @@ class IBEWidget(QWidget):
         try:
             _data = self.get_data()
             _export_ibe_excel(_data, path,
+                              labor_rate=self.LABOR_RATE,
+                              travel_rate=self.TRAVEL_RATE,
                               hotel_rate=self.HOTEL_RATE,
                               meal_rate=self.MEAL_RATE,
                               mile_rate=self.MILE_RATE)
@@ -1697,9 +1699,11 @@ class IBECard(_Card):
 # ── Standalone IBE Excel export ───────────────────────────────────────────────
 
 def _export_ibe_excel(data: dict, path: str,
-                      hotel_rate: float = 150.0,
-                      meal_rate:  float =  25.0,
-                      mile_rate:  float =   0.72):
+                      labor_rate:  float = 125.0,
+                      travel_rate: float = 100.0,
+                      hotel_rate:  float = 150.0,
+                      meal_rate:   float =  25.0,
+                      mile_rate:   float =   0.72):
     """Export IBE work-week schedule to a formatted Excel workbook."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -2040,15 +2044,29 @@ def _export_ibe_excel(data: dict, path: str,
         hdr2.font = _font(bold=True, color=WHITE); hdr2.fill = _fill(RED)
         hdr2.alignment = _align("center")
         ws.row_dimensions[sr].height = 20; sr += 1
+        _reg_h = float(confirmed.get("regular_hrs",  0))
+        _ot_h  = float(confirmed.get("ot_hrs",        0))
+        _wk_h  = float(confirmed.get("weekend_hrs",   0))
+        _tr_h  = float(confirmed.get("travel_hrs",    0))
+        _tr_c  = float(confirmed.get("travel_cost",   0))
+        _lb_c  = float(confirmed.get("labor_cost",    0))
+
         for lbl, val in [
-            ("Inspection Days",  str(confirmed.get("insp_days",    "—"))),
-            ("Hotel Nights",     str(confirmed.get("hotel_nights", "—"))),
-            ("Total Meals",      str(confirmed.get("meals",        "—"))),
-            ("Drive Miles",      f"{confirmed.get('drive_miles', 0):,.0f}"
-                                  if confirmed.get("drive_miles") else "—"),
-            ("Flights",          str(confirmed.get("flights",      "—"))),
-            ("On-Site Hours",    str(confirmed.get("onsite_hrs",   "—"))),
-            ("Total Travel Hrs", str(confirmed.get("travel_hrs",   "—"))),
+            ("Inspection Days",             str(confirmed.get("insp_days",    "—"))),
+            ("Hotel Nights",                str(confirmed.get("hotel_nights", "—"))),
+            ("Total Meals",                 str(confirmed.get("meals",        "—"))),
+            ("Drive Miles",                 f"{confirmed.get('drive_miles', 0):,.0f}"
+                                             if confirmed.get("drive_miles") else "—"),
+            ("Flights",                     str(confirmed.get("flights",      "—"))),
+            ("Regular On-Site Hrs",         f"{_reg_h:.1f} hrs  ×  ${labor_rate:,.2f}/hr"
+                                             f"  =  ${_reg_h * labor_rate:,.2f}"),
+            ("OT On-Site Hrs (×1.5)",       f"{_ot_h:.1f} hrs  ×  ${labor_rate * 1.5:,.2f}/hr"
+                                             f"  =  ${_ot_h * labor_rate * 1.5:,.2f}"),
+            ("Weekend On-Site Hrs (×2.0)",  f"{_wk_h:.1f} hrs  ×  ${labor_rate * 2.0:,.2f}/hr"
+                                             f"  =  ${_wk_h * labor_rate * 2.0:,.2f}"),
+            ("On-Site Labor Total",         f"${_lb_c:,.2f}"),
+            ("Travel Hrs",                  f"{_tr_h:.1f} hrs  ×  ${travel_rate:,.2f}/hr"
+                                             f"  =  ${_tr_c:,.2f}"),
         ]:
             ws.cell(sr, 1, lbl).font = _font(bold=True)
             ws.cell(sr, 2, val).font = _font()
@@ -2056,36 +2074,82 @@ def _export_ibe_excel(data: dict, path: str,
 
     # ── Sheet 2: Cost Summary ─────────────────────────────────────────────────
     ws2 = wb.create_sheet("Cost Summary")
-    ws2.column_dimensions["A"].width = 30
+    ws2.column_dimensions["A"].width = 52   # wider for formula strings
     ws2.column_dimensions["B"].width = 18
 
     cr = 1
-    ws2.merge_cells(f"A{cr}:B{cr}")
+    ws2.merge_cells(start_row=cr, start_column=1, end_row=cr, end_column=2)
     tc2 = ws2.cell(cr, 1, "IBE Schedule — Cost Summary")
     tc2.font = _font(bold=True, color=WHITE, size=14)
     tc2.fill = _fill(RED); tc2.alignment = _align("center")
     ws2.row_dimensions[cr].height = 26; cr += 2
 
-    def _cs_row(label, value, bold=False, bg=WHITE, fg=DARK):
+    def _cs_row(label, value, bold=False, bg=WHITE, fg=DARK, h=17):
         ws2.cell(cr, 1, label).font = _font(bold=bold, color=fg)
         ws2.cell(cr, 1).fill = _fill(bg)
         c = ws2.cell(cr, 2, value)
         c.font = _font(bold=bold, color=fg); c.fill = _fill(bg)
         c.alignment = _align("right")
-        ws2.row_dimensions[cr].height = 17
+        ws2.row_dimensions[cr].height = h
+
+    def _cs_section(title):
+        """Bold section-header banner spanning both columns."""
+        ws2.merge_cells(start_row=cr, start_column=1, end_row=cr, end_column=2)
+        sh = ws2.cell(cr, 1, title)
+        sh.font = _font(bold=True, color=WHITE, size=11)
+        sh.fill = _fill(RED); sh.alignment = _align("left")
+        ws2.row_dimensions[cr].height = 18
+
+    # ── Labor section ─────────────────────────────────────────────────────────
+    _reg_h  = confirmed.get("regular_hrs",  0.0)
+    _ot_h   = confirmed.get("ot_hrs",        0.0)
+    _wk_h   = confirmed.get("weekend_hrs",   0.0)
+    _tr_h   = confirmed.get("travel_hrs",    0.0)
+    _lab_c  = confirmed.get("labor_cost",    0.0)
+    _tr_c   = confirmed.get("travel_cost",   0.0)
+
+    _cs_section("LABOR — On-Site"); cr += 1
+
+    _cs_row(
+        f"  Regular  ({_reg_h:.1f} hrs  ×  ${labor_rate:,.2f}/hr)",
+        f"${_reg_h * labor_rate:,.2f}", bg=WHITE
+    ); cr += 1
+
+    _cs_row(
+        f"  Overtime ×1.5  ({_ot_h:.1f} hrs  ×  ${labor_rate * 1.5:,.2f}/hr)",
+        f"${_ot_h * labor_rate * 1.5:,.2f}", bg=GRAY
+    ); cr += 1
+
+    _cs_row(
+        f"  Weekend ×2.0  ({_wk_h:.1f} hrs  ×  ${labor_rate * 2.0:,.2f}/hr)",
+        f"${_wk_h * labor_rate * 2.0:,.2f}", bg=WHITE
+    ); cr += 1
+
+    _cs_row(
+        "  On-Site Labor Total",
+        f"${_lab_c:,.2f}", bold=True, bg=RED_LT, fg="1A3A6E"
+    ); cr += 2   # blank line
+
+    _cs_section("LABOR — Travel"); cr += 1
+    _cs_row(
+        f"  Travel Time  ({_tr_h:.1f} hrs  ×  ${travel_rate:,.2f}/hr)",
+        f"${_tr_c:,.2f}", bg=WHITE
+    ); cr += 2   # blank line
+
+    # ── Expenses section ──────────────────────────────────────────────────────
+    _cs_section("EXPENSES"); cr += 1
 
     for lbl, key, shade in [
-        ("Labor (On-Site)",  "labor_cost",   False),
-        ("Labor (Travel)",   "travel_cost",  True),
-        ("Hotel",            "hotel_cost",   False),
-        ("Meals",            "meal_cost",    True),
-        ("Mileage",          "mile_cost",    False),
-        ("Flights",          "flight_total", True),
+        ("  Hotel",   "hotel_cost",   False),
+        ("  Meals",   "meal_cost",    True),
+        ("  Mileage", "mile_cost",    False),
+        ("  Flights", "flight_total", True),
     ]:
         v = confirmed.get(key, 0.0)
         _cs_row(lbl, f"${v:,.2f}", bg=GRAY if shade else WHITE)
         cr += 1
 
+    # ── Totals ────────────────────────────────────────────────────────────────
     subtotal = sum(confirmed.get(k, 0.0) for k in
                    ("labor_cost", "travel_cost", "hotel_cost",
                     "meal_cost",  "mile_cost",   "flight_total"))
@@ -2098,8 +2162,8 @@ def _export_ibe_excel(data: dict, path: str,
     cr += 1
     _cs_row("Subtotal", f"${subtotal:,.2f}", bold=True, bg=RED_LT, fg="1A3A6E"); cr += 1
     if margin_pct:
-        _cs_row(f"Margin ({margin_pct*100:.1f}%)", f"{margin_pct*100:.1f}%",
+        _cs_row(f"Margin ({margin_pct * 100:.1f}%)", f"{margin_pct * 100:.1f}%",
                 bold=True, bg=BLUE_BG, fg=BLUE_FG); cr += 1
-    _cs_row("Grand Total", f"${grand:,.2f}", bold=True, bg=RED, fg=WHITE); cr += 1
+    _cs_row("Grand Total", f"${grand:,.2f}", bold=True, bg=RED, fg=WHITE, h=20); cr += 1
 
     wb.save(path)
