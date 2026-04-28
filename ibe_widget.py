@@ -187,7 +187,8 @@ class IBEWidget(QWidget):
         self._tech_rows       = []
         self._num_techs       = 1
         self._confirmed       = {}
-        self._row_hours_edits = {}   # row_idx → QLineEdit for per-day hour override
+        self._row_hours_edits = {}   # row_idx → QLineEdit for per-day total hours
+        self._row_ot_edits    = {}   # row_idx → QLineEdit for per-day OT hours override
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -952,6 +953,7 @@ class IBEWidget(QWidget):
             return
 
         self._row_hours_edits = {}  # reset per-day hour overrides
+        self._row_ot_edits    = {}  # reset per-day OT overrides
 
         daily     = rate * hours * n
         insp_days = math.ceil(panels / daily) if daily > 0 else 0
@@ -1065,7 +1067,15 @@ class IBEWidget(QWidget):
             else:           _win_hrs = 0
             _default_hrs_text = str(_win_hrs) if _win_hrs > 0 else (self._hours_edit.text() or "8")
         else:
+            _win_hrs = 0
             _default_hrs_text = self._hours_edit.text() or "8"
+
+        _OT_FIELD = (
+            "QLineEdit { color:#7b3800; background:#fff8ec;"
+            "  border:1px solid #e8a020; border-radius:3px;"
+            "  padding:1px 3px; font-size:10px; font-weight:600; }"
+            "QLineEdit:focus { border-color:#c07010; }"
+        )
 
         for r, (day_lbl, activity, is_insp, def_hotel) in enumerate(sched):
             is_weekend    = day_lbl == "Weekend"
@@ -1080,14 +1090,47 @@ class IBEWidget(QWidget):
             hrs_l.setContentsMargins(4, 4, 4, 4)
             hrs_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
             if is_insp:
+                # Total hours field
                 he = QLineEdit(_default_hrs_text)
-                he.setFixedWidth(46)
+                he.setFixedWidth(50)
                 he.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 he.setValidator(QDoubleValidator(0.5, 24.0, 1))
                 he.setStyleSheet(_FIELD_STYLE)
-                he.setToolTip("Hours worked this day (overrides default)")
+                he.setToolTip("Total hours worked this day")
                 hrs_l.addWidget(he)
                 self._row_hours_edits[r] = he
+
+                # OT hours override — defaults to auto-calculated value
+                try:
+                    _def_ot = max(0.0, float(_default_hrs_text) - _win_hrs)
+                except Exception:
+                    _def_ot = 0.0
+                _ot_row = QHBoxLayout()
+                _ot_row.setSpacing(2)
+                _ot_row.setContentsMargins(0, 0, 0, 0)
+                _ot_lbl = QLabel("OT:")
+                _ot_lbl.setStyleSheet(f"font-size:9px; color:{_SUBTEXT}; font-weight:600;")
+                _ot_row.addWidget(_ot_lbl)
+                oe = QLineEdit(f"{_def_ot:.1f}")
+                oe.setFixedWidth(38)
+                oe.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                oe.setValidator(QDoubleValidator(0.0, 24.0, 1))
+                oe.setStyleSheet(_OT_FIELD)
+                oe.setToolTip(
+                    "Overtime hours this day (amber).\n"
+                    "Auto-updates when Total hrs changes;\n"
+                    "edit directly to override.")
+                _ot_row.addWidget(oe)
+                hrs_l.addLayout(_ot_row)
+                self._row_ot_edits[r] = oe
+
+                # Auto-update OT when total hours change
+                def _sync_ot(_txt, _oe=oe, _wf=float(_win_hrs)):
+                    try:
+                        _oe.setText(f"{max(0.0, float(_txt or '0') - _wf):.1f}")
+                    except Exception:
+                        pass
+                he.textChanged.connect(_sync_ot)
             else:
                 _dash = QLabel("—")
                 _dash.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1360,10 +1403,26 @@ class IBEWidget(QWidget):
                     day_hrs = default_hrs
             else:
                 day_hrs = default_hrs
+            # OT override — use explicit value if set, else auto-calc from window
+            _oe = self._row_ot_edits.get(r_idx)
+            if _oe is not None:
+                try:
+                    _ot_override = min(max(0.0, float(_oe.text() or "0")), day_hrs)
+                    _use_ot_override = True
+                except Exception:
+                    _use_ot_override = False
+                    _ot_override = 0.0
+            else:
+                _use_ot_override = False
+                _ot_override = 0.0
+
             is_wknd = _DAY_IDX.get(dl, 0) >= 5   # Sat = 5, Sun = 6
             for _t in range(n):
                 if is_wknd:
                     weekend_hrs += day_hrs
+                elif _use_ot_override:
+                    ot_hrs      += _ot_override
+                    regular_hrs += max(0.0, day_hrs - _ot_override)
                 else:
                     regular_hrs += min(day_hrs, normal_window)
                     ot_hrs      += max(0.0, day_hrs - normal_window)
@@ -1588,6 +1647,8 @@ class IBEWidget(QWidget):
                                   if hasattr(self, "_work_end_combo")   else 17),
             "row_hours":         {str(r): (he.text() or "")
                                   for r, he in self._row_hours_edits.items()},
+            "row_ot":            {str(r): (oe.text() or "")
+                                  for r, oe in self._row_ot_edits.items()},
             # Schedule state (populated after Generate / Confirm)
             "schedule":      [(dl, act, insp, dh) for dl, act, insp, dh in self._schedule],
             "hotel_states":  hotel_states,
