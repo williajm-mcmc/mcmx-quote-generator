@@ -324,12 +324,14 @@ class IBEWidget(QWidget):
             return
         try:
             _data = self.get_data()
-            _export_ibe_excel(_data, path,
-                              labor_rate=self.LABOR_RATE,
-                              travel_rate=self.TRAVEL_RATE,
-                              hotel_rate=self.HOTEL_RATE,
-                              meal_rate=self.MEAL_RATE,
-                              mile_rate=self.MILE_RATE)
+            _export_ibe_excel(
+                _data, path,
+                labor_rate=(_n(self._rate_labor.text(),  self.LABOR_RATE)  if hasattr(self, "_rate_labor")  else self.LABOR_RATE),
+                travel_rate=(_n(self._rate_travel.text(), self.TRAVEL_RATE) if hasattr(self, "_rate_travel") else self.TRAVEL_RATE),
+                hotel_rate=(_n(self._rate_hotel.text(),  self.HOTEL_RATE)  if hasattr(self, "_rate_hotel")  else self.HOTEL_RATE),
+                meal_rate=(_n(self._rate_meal.text(),    self.MEAL_RATE)   if hasattr(self, "_rate_meal")   else self.MEAL_RATE),
+                mile_rate=(_n(self._rate_mile.text(),    self.MILE_RATE)   if hasattr(self, "_rate_mile")   else self.MILE_RATE),
+            )
             _mcmxi_path = os.path.splitext(path)[0] + ".mcmxi"
             try:
                 with open(_mcmxi_path, "w", encoding="utf-8") as _mf:
@@ -584,6 +586,48 @@ class IBEWidget(QWidget):
 
         sw_row.addStretch()
         layout.addLayout(sw_row)
+
+        # ── Rate overrides ────────────────────────────────────────────────────
+        sep_rates = QFrame()
+        sep_rates.setFrameShape(QFrame.Shape.HLine)
+        sep_rates.setStyleSheet(f"color:{_BORDER};")
+        layout.addWidget(sep_rates)
+
+        rate_hdr = QLabel("Billing Rates  (override defaults)")
+        rate_hdr.setStyleSheet(f"font-size:11px; font-weight:700; color:{_SUBTEXT};")
+        layout.addWidget(rate_hdr)
+
+        _rate_field_s = (
+            "QLineEdit { color:#1a0509; background:#ffffff; border:1px solid #d6c0c5;"
+            "  border-radius:4px; padding:3px 6px; font-size:11px; }"
+            "QLineEdit:focus { border-color:#920d2e; }"
+        )
+        rates_row = QHBoxLayout(); rates_row.setSpacing(16)
+        for _attr, _cap, _def, _suf in [
+            ("_rate_labor",  "Labor/hr (Work)",   "125",  "/hr"),
+            ("_rate_travel", "Labor/hr (Travel)",  "100",  "/hr"),
+            ("_rate_hotel",  "Hotel/night",         "150",  "/night"),
+            ("_rate_meal",   "Meal/day",            "25",   "/meal"),
+            ("_rate_mile",   "Mileage/mi",          "0.72", "/mi"),
+        ]:
+            _col = QVBoxLayout(); _col.setSpacing(2)
+            _lbl = QLabel(_cap); _lbl.setStyleSheet(f"font-size:10px; color:{_SUBTEXT};")
+            _col.addWidget(_lbl)
+            _ri = QHBoxLayout(); _ri.setSpacing(2)
+            _dlr = QLabel("$"); _dlr.setStyleSheet(f"font-size:11px; color:{_TEXT};")
+            _ri.addWidget(_dlr)
+            _fld = QLineEdit(_def)
+            _fld.setFixedWidth(68)
+            _fld.setValidator(QDoubleValidator(0.0, 99999.0, 2))
+            _fld.setStyleSheet(_rate_field_s)
+            _ri.addWidget(_fld)
+            _sufx = QLabel(_suf); _sufx.setStyleSheet(f"font-size:10px; color:{_SUBTEXT};")
+            _ri.addWidget(_sufx)
+            _col.addLayout(_ri)
+            rates_row.addLayout(_col)
+            setattr(self, _attr, _fld)
+        rates_row.addStretch()
+        layout.addLayout(rates_row)
 
         # Preview strip
         sep = QFrame()
@@ -1471,12 +1515,12 @@ class IBEWidget(QWidget):
                 if ti_hotel:   flight_total += fc
                 if last_hotel: flight_total += fc
 
-        # Cost breakdown (OT-aware labor)
-        _lr = self.LABOR_RATE
-        _tr = self.TRAVEL_RATE
-        _hr = self.HOTEL_RATE
-        _mr = self.MEAL_RATE
-        _mi = self.MILE_RATE
+        # Cost breakdown (OT-aware labor) — use UI rate fields when present
+        _lr = _n(self._rate_labor.text(),  self.LABOR_RATE)  if hasattr(self, "_rate_labor")  else self.LABOR_RATE
+        _tr = _n(self._rate_travel.text(), self.TRAVEL_RATE) if hasattr(self, "_rate_travel") else self.TRAVEL_RATE
+        _hr = _n(self._rate_hotel.text(),  self.HOTEL_RATE)  if hasattr(self, "_rate_hotel")  else self.HOTEL_RATE
+        _mr = _n(self._rate_meal.text(),   self.MEAL_RATE)   if hasattr(self, "_rate_meal")   else self.MEAL_RATE
+        _mi = _n(self._rate_mile.text(),   self.MILE_RATE)   if hasattr(self, "_rate_mile")   else self.MILE_RATE
         labor_cost  = (regular_hrs * _lr +
                        ot_hrs      * _lr * 1.5 +
                        weekend_hrs * _lr * 2.0)
@@ -1566,13 +1610,14 @@ class IBEWidget(QWidget):
             return
         new_meals = max(0, new_meals)
         self._sum_meals.setText(str(new_meals))
-        new_meal_cost = new_meals * self.MEAL_RATE
+        _mr = _n(self._rate_meal.text(), self.MEAL_RATE) if hasattr(self, "_rate_meal") else self.MEAL_RATE
+        new_meal_cost = new_meals * _mr
         self._confirmed["meals"] = new_meals
         self._confirmed["meal_cost"] = new_meal_cost
         self._cost_meals.setText(f"${new_meal_cost:,.2f}")
         if hasattr(self, "_cost_meals_formula"):
             self._cost_meals_formula.setText(
-                f"{new_meals} meal{'s' if new_meals != 1 else ''} × ${self.MEAL_RATE:,.0f}/meal")
+                f"{new_meals} meal{'s' if new_meals != 1 else ''} × ${_mr:,.0f}/meal")
         self._recalc_cost_totals()
 
     def _adj_margin(self, delta: int):
@@ -1645,6 +1690,11 @@ class IBEWidget(QWidget):
                                   if hasattr(self, "_work_start_combo") else 8),
             "work_end":          (self._work_end_combo.currentIndex()
                                   if hasattr(self, "_work_end_combo")   else 17),
+            "rate_labor":        (self._rate_labor.text()  if hasattr(self, "_rate_labor")  else str(self.LABOR_RATE)),
+            "rate_travel":       (self._rate_travel.text() if hasattr(self, "_rate_travel") else str(self.TRAVEL_RATE)),
+            "rate_hotel":        (self._rate_hotel.text()  if hasattr(self, "_rate_hotel")  else str(self.HOTEL_RATE)),
+            "rate_meal":         (self._rate_meal.text()   if hasattr(self, "_rate_meal")   else str(self.MEAL_RATE)),
+            "rate_mile":         (self._rate_mile.text()   if hasattr(self, "_rate_mile")   else str(self.MILE_RATE)),
             "row_hours":         {str(r): (he.text() or "")
                                   for r, he in self._row_hours_edits.items()},
             "row_ot":            {str(r): (oe.text() or "")
@@ -1696,6 +1746,12 @@ class IBEWidget(QWidget):
             self._work_start_combo.setCurrentIndex(int(d.get("work_start", 8)))
         if hasattr(self, "_work_end_combo"):
             self._work_end_combo.setCurrentIndex(int(d.get("work_end", 17)))
+        if hasattr(self, "_rate_labor"):
+            self._rate_labor.setText( d.get("rate_labor",  str(self.LABOR_RATE)))
+            self._rate_travel.setText(d.get("rate_travel", str(self.TRAVEL_RATE)))
+            self._rate_hotel.setText( d.get("rate_hotel",  str(self.HOTEL_RATE)))
+            self._rate_meal.setText(  d.get("rate_meal",   str(self.MEAL_RATE)))
+            self._rate_mile.setText(  d.get("rate_mile",   str(self.MILE_RATE)))
         self._recalc_preview()
         if hasattr(self, "_margin_lbl"):
             self._margin_lbl.setText(str(d.get("margin", "0.0")))

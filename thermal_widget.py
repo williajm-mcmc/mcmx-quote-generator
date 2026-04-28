@@ -109,6 +109,8 @@ class ThermalImagingWidget(QWidget):
         self._travel_in_checks  = {}
         self._travel_out_checks = {}
         self._confirmed         = {}
+        self._row_hours_edits   = {}   # row_idx → QLineEdit for per-day total hours
+        self._row_ot_edits      = {}   # row_idx → QLineEdit for per-day OT hours override
         self._thermal_sections  = []
         self._sections_layout   = None
 
@@ -675,6 +677,97 @@ class ThermalImagingWidget(QWidget):
         dw_row.addStretch()
         layout.addLayout(dw_row)
 
+        # Start Day of Week + Work Hours
+        sw_row = QHBoxLayout(); sw_row.setSpacing(16)
+
+        sd_lbl = QLabel("Start Day:")
+        sd_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED};")
+        sd_lbl.setFixedWidth(78)
+        sw_row.addWidget(sd_lbl)
+
+        _SD_STYLE = (
+            "QComboBox { font-size:12px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; border-radius:4px; padding:4px 10px; min-width:100px; }"
+            "QComboBox:focus { border-color:#920d2e; } QComboBox:hover { border-color:#920d2e; }"
+            "QComboBox::drop-down { subcontrol-origin:padding; subcontrol-position:top right;"
+            "  width:28px; border-left:1px solid #d6c0c5;"
+            "  border-top-right-radius:4px; border-bottom-right-radius:4px; background:#f4f6fa; }"
+            "QComboBox::down-arrow { image:none; width:0; height:0;"
+            "  border-left:5px solid transparent; border-right:5px solid transparent;"
+            "  border-top:6px solid #920d2e; }"
+            "QComboBox QAbstractItemView { font-size:12px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; border-radius:4px;"
+            "  selection-background-color:#f5d0da; selection-color:#920d2e; outline:none; }"
+        )
+        self._start_day_combo = QComboBox()
+        self._start_day_combo.setStyleSheet(_SD_STYLE)
+        for _dn in _DAY_NAMES:
+            self._start_day_combo.addItem(_dn)
+        self._start_day_combo.setCurrentIndex(0)
+        self._start_day_combo.setToolTip("First day of the first work week")
+        self._start_day_combo.currentIndexChanged.connect(self._mark_outlook_stale)
+        sw_row.addWidget(self._start_day_combo)
+
+        sw_row.addSpacing(24)
+
+        wh_lbl = QLabel("Work Hours:")
+        wh_lbl.setStyleSheet(f"font-size:12px; font-weight:700; color:{_RED};")
+        sw_row.addWidget(wh_lbl)
+
+        _TC_STYLE = (
+            "QComboBox { font-size:11px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; border-radius:4px; padding:3px 8px; min-width:90px; }"
+            "QComboBox:focus { border-color:#920d2e; } QComboBox:hover { border-color:#920d2e; }"
+            "QComboBox::drop-down { subcontrol-origin:padding; subcontrol-position:top right;"
+            "  width:22px; border-left:1px solid #d6c0c5;"
+            "  border-top-right-radius:4px; border-bottom-right-radius:4px; background:#f4f6fa; }"
+            "QComboBox::down-arrow { image:none; width:0; height:0;"
+            "  border-left:5px solid transparent; border-right:5px solid transparent;"
+            "  border-top:6px solid #920d2e; }"
+            "QComboBox QAbstractItemView { font-size:11px; color:#1a0509; background:#ffffff;"
+            "  border:1px solid #d6c0c5; selection-background-color:#f5d0da;"
+            "  selection-color:#920d2e; outline:none; }"
+        )
+
+        def _hlbl(h):
+            if h == 0:  return "12:00 AM"
+            if h < 12:  return f"{h}:00 AM"
+            if h == 12: return "12:00 PM"
+            return f"{h - 12}:00 PM"
+
+        self._work_start_combo = QComboBox()
+        self._work_start_combo.setStyleSheet(_TC_STYLE)
+        for _h in range(24):
+            self._work_start_combo.addItem(_hlbl(_h), _h)
+        self._work_start_combo.setCurrentIndex(8)   # 8:00 AM
+        self._work_start_combo.setToolTip(
+            "Shift start time.\nWeekday hours before this are overtime (× 1.5).")
+        sw_row.addWidget(self._work_start_combo)
+
+        _wh_to = QLabel("to")
+        _wh_to.setStyleSheet(f"font-size:12px; color:{_TEXT};")
+        sw_row.addWidget(_wh_to)
+
+        self._work_end_combo = QComboBox()
+        self._work_end_combo.setStyleSheet(_TC_STYLE)
+        for _h in range(24):
+            self._work_end_combo.addItem(_hlbl(_h), _h)
+        self._work_end_combo.setCurrentIndex(17)    # 5:00 PM
+        self._work_end_combo.setToolTip(
+            "Shift end time.\nWeekday hours after this are overtime (× 1.5).\n"
+            "Set end before start for overnight shifts (e.g. 10:00 PM → 8:00 AM).")
+        sw_row.addWidget(self._work_end_combo)
+
+        self._wh_window_lbl = QLabel("")
+        self._wh_window_lbl.setStyleSheet(f"font-size:10px; color:{_SUBTEXT}; font-style:italic;")
+        sw_row.addWidget(self._wh_window_lbl)
+        self._work_start_combo.currentIndexChanged.connect(self._update_wh_window_lbl)
+        self._work_end_combo.currentIndexChanged.connect(self._update_wh_window_lbl)
+        self._update_wh_window_lbl()
+
+        sw_row.addStretch()
+        layout.addLayout(sw_row)
+
         # ── Rate overrides ────────────────────────────────────────────────────
         sep0 = QFrame(); sep0.setFrameShape(QFrame.Shape.HLine)
         sep0.setStyleSheet(f"color:{_BORDER};"); layout.addWidget(sep0)
@@ -1133,6 +1226,23 @@ class ThermalImagingWidget(QWidget):
             self._export_btn.setEnabled(False)
             self._export_btn.setToolTip("Confirm the schedule first.")
 
+    def _update_wh_window_lbl(self):
+        """Recompute and display the work-window duration next to the time dropdowns."""
+        if not hasattr(self, "_work_start_combo") or not hasattr(self, "_wh_window_lbl"):
+            return
+        s = self._work_start_combo.currentIndex()
+        e = self._work_end_combo.currentIndex()
+        if e > s:
+            hrs = e - s
+            self._wh_window_lbl.setText(
+                f"= {hrs}h/day  ·  weekday OT × 1.5  ·  weekend × 2.0")
+        elif e < s:
+            hrs = 24 - s + e
+            self._wh_window_lbl.setText(
+                f"= {hrs}h overnight (end is next day)  ·  weekday OT × 1.5  ·  weekend × 2.0")
+        else:
+            self._wh_window_lbl.setText("= 0h window — every hour counts as OT")
+
     def _update_gen_btn_state(self, *_):
         """Enable Generate button only when a day count has been entered."""
         if hasattr(self, '_gen_btn'):
@@ -1169,37 +1279,47 @@ class ThermalImagingWidget(QWidget):
                 "Enter the number of working days and select at least one work day.")
             return
 
+        self._row_hours_edits = {}  # reset per-day hour overrides
+        self._row_ot_edits    = {}  # reset per-day OT overrides
+
         if len(wdays) > 1:
             gap_days = (wdays[0] + 7 - wdays[-1] - 1) % 7
         else:
             gap_days = 6
         self._weekend_days = gap_days
 
+        # First week may start mid-week based on the chosen Start Day
+        start_day_idx = (self._start_day_combo.currentIndex()
+                         if hasattr(self, "_start_day_combo") else 0)
+        first_week_days = [wd for wd in wdays if wd >= start_day_idx]
+        if not first_week_days:
+            first_week_days = wdays  # fall back if start is after all work days
+
         sched = []
 
         # Travel In/Out only when at least one tech's journey warrants it
         # (flying, or drive time >= 2 hrs one-way).  Local techs drive RT
         # each day — no overnight stays, so no dedicated travel days.
-        _n_techs = self._num_techs
         _any_hotel_needed = any(
             _n(self._tech_rows[i]["travel"].text(), 0.0) >= 2.0 or
             self._tech_rows[i]["mode"].currentText() == "Flying"
-            for i in range(_n_techs)
+            for i in range(self._num_techs)
             if i < len(self._tech_rows)
         )
 
-        travel_in_day = _DAY_NAMES[(wdays[0] - 1) % 7]
+        travel_in_day = _DAY_NAMES[(first_week_days[0] - 1) % 7]
         if _any_hotel_needed:
             sched.append((travel_in_day, "Travel In", False, True))
 
-        done = 0; last_wd = wdays[0]; first_week = True
+        done = 0; last_wd = first_week_days[0]; first_week = True
         while done < work_days:
+            week_days = first_week_days if first_week else wdays
             if not first_week and gap_days > 0:
                 sched.append(("Weekend", "— Travel Home / Return —", False, False))
             first_week = False
-            for wd in wdays:
+            for wd in week_days:
                 if done >= work_days: break
-                done += 1; last_wd = wd; is_last = done == work_days
+                done += 1; last_wd = wd
                 sched.append((_DAY_NAMES[wd], f"Work  Day {done}", True, True))
 
         travel_out_day = _DAY_NAMES[(last_wd + 1) % 7]
@@ -1235,7 +1355,7 @@ class ThermalImagingWidget(QWidget):
             else:
                 tech_info.append({"mode":"Driving","travel_hrs":0.0,"mileage_ow":0.0,"flight_cost":0.0})
 
-        headers = ["Day", "Activity"] + tech_names
+        headers = ["Day", "Activity", "Hrs"] + tech_names
         self._outlook_table.setColumnCount(len(headers))
         self._outlook_table.setHorizontalHeaderLabels(headers)
         self._outlook_table.setRowCount(len(sched))
@@ -1246,13 +1366,34 @@ class ThermalImagingWidget(QWidget):
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self._outlook_table.setColumnWidth(0, 95)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for c in range(2, len(headers)):
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self._outlook_table.setColumnWidth(2, 64)
+        for c in range(3, len(headers)):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.Fixed)
             self._outlook_table.setColumnWidth(c, 155)
 
         self._hotel_checks      = [[None] * len(sched) for _ in range(num_techs)]
         self._travel_in_checks  = {}
         self._travel_out_checks = {}
+
+        # Compute work-hours window for default hours / OT fields
+        if hasattr(self, "_work_start_combo") and hasattr(self, "_work_end_combo"):
+            _ws = self._work_start_combo.currentIndex()
+            _we = self._work_end_combo.currentIndex()
+            if _we > _ws:   _win_hrs = _we - _ws
+            elif _we < _ws: _win_hrs = 24 - _ws + _we
+            else:           _win_hrs = 0
+            _default_hrs_text = str(_win_hrs) if _win_hrs > 0 else (self._hours_edit.text() or "8")
+        else:
+            _win_hrs = 0
+            _default_hrs_text = self._hours_edit.text() or "8"
+
+        _OT_FIELD = (
+            "QLineEdit { color:#7b3800; background:#fff8ec;"
+            "  border:1px solid #e8a020; border-radius:3px;"
+            "  padding:1px 3px; font-size:10px; font-weight:600; }"
+            "QLineEdit:focus { border-color:#c07010; }"
+        )
 
         for r, (day_lbl, activity, is_work, def_hotel) in enumerate(sched):
             is_weekend    = day_lbl == "Weekend"
@@ -1275,6 +1416,60 @@ class ThermalImagingWidget(QWidget):
                 act_item.setBackground(QColor("#f4f6fa"))
                 act_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._outlook_table.setItem(r, 1, act_item)
+
+            # ── Hrs column (col 2) ────────────────────────────────────────────
+            hrs_w = QWidget()
+            hrs_w.setStyleSheet("background:#f4f6fa;" if is_weekend else "background:#ffffff;")
+            hrs_l = QVBoxLayout(hrs_w)
+            hrs_l.setContentsMargins(4, 4, 4, 4)
+            hrs_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if is_work:
+                # Total hours field
+                he = QLineEdit(_default_hrs_text)
+                he.setFixedWidth(50)
+                he.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                he.setValidator(QDoubleValidator(0.5, 24.0, 1))
+                he.setStyleSheet(_FIELD_STYLE)
+                he.setToolTip("Total hours worked this day")
+                hrs_l.addWidget(he)
+                self._row_hours_edits[r] = he
+
+                # OT hours override — defaults to auto-calculated value
+                try:
+                    _def_ot = max(0.0, float(_default_hrs_text) - _win_hrs)
+                except Exception:
+                    _def_ot = 0.0
+                _ot_row = QHBoxLayout()
+                _ot_row.setSpacing(2)
+                _ot_row.setContentsMargins(0, 0, 0, 0)
+                _ot_lbl = QLabel("OT:")
+                _ot_lbl.setStyleSheet(f"font-size:9px; color:{_SUBTEXT}; font-weight:600;")
+                _ot_row.addWidget(_ot_lbl)
+                oe = QLineEdit(f"{_def_ot:.1f}")
+                oe.setFixedWidth(38)
+                oe.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                oe.setValidator(QDoubleValidator(0.0, 24.0, 1))
+                oe.setStyleSheet(_OT_FIELD)
+                oe.setToolTip(
+                    "Overtime hours this day (amber).\n"
+                    "Auto-updates when Total hrs changes;\n"
+                    "edit directly to override.")
+                _ot_row.addWidget(oe)
+                hrs_l.addLayout(_ot_row)
+                self._row_ot_edits[r] = oe
+
+                def _sync_ot(_txt, _oe=oe, _wf=float(_win_hrs)):
+                    try:
+                        _oe.setText(f"{max(0.0, float(_txt or '0') - _wf):.1f}")
+                    except Exception:
+                        pass
+                he.textChanged.connect(_sync_ot)
+            else:
+                _dash = QLabel("—")
+                _dash.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                _dash.setStyleSheet(f"font-size:12px; color:{_SUBTEXT};")
+                hrs_l.addWidget(_dash)
+            self._outlook_table.setCellWidget(r, 2, hrs_w)
 
             for t in range(num_techs):
                 info   = tech_info[t]
@@ -1422,7 +1617,7 @@ class ThermalImagingWidget(QWidget):
                         _prev_cb.toggled.connect(_on_prev_toggled)
 
                 cell_vl.addStretch()
-                self._outlook_table.setCellWidget(r, 2 + t, cell_w)
+                self._outlook_table.setCellWidget(r, 3 + t, cell_w)
 
         ROW_H = 110
         for r in range(len(sched)):
@@ -1444,7 +1639,6 @@ class ThermalImagingWidget(QWidget):
 
         n          = self._num_techs
         work_days  = sum(1 for _, _, is_w, _ in self._schedule if is_w)
-        hours_pd   = _n(self._hours_edit.text(), 8.0)
         weekend_rows = [r for r, (dl, _, _, _) in enumerate(self._schedule) if dl == "Weekend"]
 
         # Hotel
@@ -1505,8 +1699,59 @@ class ThermalImagingWidget(QWidget):
                     dm += mi_ow
                 total_drive_miles += dm
 
-        # Hours
-        onsite_hrs = work_days * hours_pd * n
+        # Hours — per-row overrides with weekday OT / weekend split
+        _DAY_IDX     = {name: i for i, name in enumerate(_DAY_NAMES)}
+        work_start_h = (self._work_start_combo.currentIndex()
+                        if hasattr(self, "_work_start_combo") else 8)
+        work_end_h   = (self._work_end_combo.currentIndex()
+                        if hasattr(self, "_work_end_combo")   else 17)
+        if work_end_h > work_start_h:
+            normal_window = float(work_end_h - work_start_h)
+        elif work_end_h < work_start_h:
+            normal_window = float(24 - work_start_h + work_end_h)
+        else:
+            normal_window = 0.0
+        default_hrs = _n(self._hours_edit.text(), 8.0)
+
+        regular_hrs = 0.0   # weekday within normal window
+        ot_hrs      = 0.0   # weekday outside normal window  (× 1.5)
+        weekend_hrs = 0.0   # Saturday / Sunday              (× 2.0)
+
+        for r_idx, (dl, act, is_w, _) in enumerate(self._schedule):
+            if not is_w:
+                continue
+            _he = self._row_hours_edits.get(r_idx)
+            if _he is not None:
+                try:
+                    day_hrs = float(_he.text() or str(default_hrs))
+                except Exception:
+                    day_hrs = default_hrs
+            else:
+                day_hrs = default_hrs
+            _oe = self._row_ot_edits.get(r_idx)
+            if _oe is not None:
+                try:
+                    _ot_override     = min(max(0.0, float(_oe.text() or "0")), day_hrs)
+                    _use_ot_override = True
+                except Exception:
+                    _use_ot_override = False
+                    _ot_override     = 0.0
+            else:
+                _use_ot_override = False
+                _ot_override     = 0.0
+
+            is_wknd = _DAY_IDX.get(dl, 0) >= 5
+            for _t in range(n):
+                if is_wknd:
+                    weekend_hrs += day_hrs
+                elif _use_ot_override:
+                    ot_hrs      += _ot_override
+                    regular_hrs += max(0.0, day_hrs - _ot_override)
+                else:
+                    regular_hrs += min(day_hrs, normal_window)
+                    ot_hrs      += max(0.0, day_hrs - normal_window)
+
+        onsite_hrs = regular_hrs + ot_hrs + weekend_hrs
         travel_hrs = 0.0
         for i in range(min(n, len(self._tech_rows))):
             t_hrs = _n(self._tech_rows[i]["travel"].text())
@@ -1535,12 +1780,20 @@ class ThermalImagingWidget(QWidget):
                 th += t_hrs
             travel_hrs += th
 
-        # Costs (before margin)
-        labor_cost   = onsite_hrs        * _n(self._rate_labor.text(),  self.LABOR_RATE)
-        travel_cost  = travel_hrs        * _n(self._rate_travel.text(), self.TRAVEL_RATE)
-        hotel_cost   = total_hotel       * _n(self._rate_hotel.text(),  self.HOTEL_RATE)
-        meal_cost    = total_meals       * _n(self._rate_meal.text(),   self.MEAL_RATE)
-        mile_cost    = total_drive_miles * _n(self._rate_mile.text(),   self.MILE_RATE)
+        # Costs (before margin) — OT-aware labor
+        _lr = _n(self._rate_labor.text(),  self.LABOR_RATE)
+        _tr = _n(self._rate_travel.text(), self.TRAVEL_RATE)
+        _hr = _n(self._rate_hotel.text(),  self.HOTEL_RATE)
+        _mr = _n(self._rate_meal.text(),   self.MEAL_RATE)
+        _mi = _n(self._rate_mile.text(),   self.MILE_RATE)
+
+        labor_cost   = (regular_hrs * _lr +
+                        ot_hrs      * _lr * 1.5 +
+                        weekend_hrs * _lr * 2.0)
+        travel_cost  = travel_hrs        * _tr
+        hotel_cost   = total_hotel       * _hr
+        meal_cost    = total_meals       * _mr
+        mile_cost    = total_drive_miles * _mi
         flight_total = 0.0
         for i in range(min(n, len(self._tech_rows))):
             if self._tech_rows[i]["mode"].currentText() == "Flying":
@@ -1559,6 +1812,7 @@ class ThermalImagingWidget(QWidget):
             "work_days": work_days, "hotel_nights": total_hotel,
             "meals": total_meals,   "flights": flights,
             "drive_miles": total_drive_miles, "onsite_hrs": onsite_hrs,
+            "regular_hrs": regular_hrs, "ot_hrs": ot_hrs, "weekend_hrs": weekend_hrs,
             "travel_hrs": travel_hrs,
             "labor_cost": labor_cost, "travel_cost": travel_cost,
             "hotel_cost": hotel_cost, "meal_cost": meal_cost,
@@ -1571,15 +1825,17 @@ class ThermalImagingWidget(QWidget):
         self._sum_flights.setText(str(flights))
         self._sum_miles.setText(f"{total_drive_miles:,.0f}")
 
-        _lr = _n(self._rate_labor.text(),  self.LABOR_RATE)
-        _tr = _n(self._rate_travel.text(), self.TRAVEL_RATE)
-        _hr = _n(self._rate_hotel.text(),  self.HOTEL_RATE)
-        _mr = _n(self._rate_meal.text(),   self.MEAL_RATE)
-        _mi = _n(self._rate_mile.text(),   self.MILE_RATE)
-
         self._cost_labor.setText(f"${labor_cost:,.2f}")
+        _labor_parts = []
+        if regular_hrs > 0:
+            _labor_parts.append(f"{regular_hrs:.1f}h × ${_lr:,.0f}")
+        if ot_hrs > 0:
+            _labor_parts.append(f"{ot_hrs:.1f}h × ${_lr * 1.5:,.0f} (OT)")
+        if weekend_hrs > 0:
+            _labor_parts.append(f"{weekend_hrs:.1f}h × ${_lr * 2.0:,.0f} (wknd)")
         self._cost_labor_formula.setText(
-            f"{onsite_hrs:.1f} hrs × ${_lr:,.2f}/hr")
+            " + ".join(_labor_parts) if _labor_parts
+            else f"{onsite_hrs:.1f} hrs × ${_lr:,.0f}/hr")
 
         self._cost_travel.setText(f"${travel_cost:,.2f}")
         self._cost_travel_formula.setText(
@@ -1709,6 +1965,16 @@ class ThermalImagingWidget(QWidget):
             "tech_flight_costs": [r["flight_cost"].text() for r in self._tech_rows],
             "tech_mileages":     [r["mileage"].text()     for r in self._tech_rows],
             "work_days":         [i for i, cb in enumerate(self._day_checks) if cb.isChecked()],
+            "start_day":         (self._start_day_combo.currentIndex()
+                                  if hasattr(self, "_start_day_combo") else 0),
+            "work_start":        (self._work_start_combo.currentIndex()
+                                  if hasattr(self, "_work_start_combo") else 8),
+            "work_end":          (self._work_end_combo.currentIndex()
+                                  if hasattr(self, "_work_end_combo")   else 17),
+            "row_hours":         {str(r): (he.text() or "")
+                                  for r, he in self._row_hours_edits.items()},
+            "row_ot":            {str(r): (oe.text() or "")
+                                  for r, oe in self._row_ot_edits.items()},
             "schedule":          [(dl, act, iw, dh) for dl, act, iw, dh in self._schedule],
             "hotel_states":      hotel_states,
             "confirmed":         self._confirmed,
@@ -1769,6 +2035,12 @@ class ThermalImagingWidget(QWidget):
         wd = set(d.get("work_days", [0,1,2,3,4]))
         for i, cb in enumerate(self._day_checks):
             cb.setChecked(i in wd)
+        if hasattr(self, "_start_day_combo"):
+            self._start_day_combo.setCurrentIndex(int(d.get("start_day", 0)))
+        if hasattr(self, "_work_start_combo"):
+            self._work_start_combo.setCurrentIndex(int(d.get("work_start", 8)))
+        if hasattr(self, "_work_end_combo"):
+            self._work_end_combo.setCurrentIndex(int(d.get("work_end", 17)))
         self._margin_lbl.setText(d.get("margin", "0.0"))
         self._ase_enabled.setChecked(d.get("ase_enabled", False))
         idx = d.get("ase_tier", 0)
