@@ -5,7 +5,7 @@ import os
 from datetime import date
 
 # ── Application version (must match the latest Git release tag) ───────────────
-APP_VERSION = "2.0.8"
+APP_VERSION = "2.1"
 
 
 def _resource_path(relative):

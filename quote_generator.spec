@@ -128,8 +128,8 @@ if sys.platform == 'darwin':
         bundle_identifier='com.mcmx.quotegenerator',
         info_plist={
             'NSHighResolutionCapable': True,
-            'CFBundleShortVersionString': '2.0',
-            'CFBundleVersion': '2.0',
+            'CFBundleShortVersionString': '2.1',
+            'CFBundleVersion': '2.1',
             'NSRequiresAquaSystemAppearance': False,  # allow dark mode
         },
     )
