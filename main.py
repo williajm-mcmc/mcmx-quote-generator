@@ -16,7 +16,7 @@ def _resource_path(relative):
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
     QWidget, QVBoxLayout, QDoubleSpinBox, QLabel, QHBoxLayout, QPushButton,
-    QTextEdit, QSizePolicy, QTabWidget, QLineEdit,
+    QTextEdit, QSizePolicy, QTabWidget, QLineEdit, QFormLayout,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
@@ -466,6 +466,44 @@ class MainWindow(QMainWindow):
         self.centralwidget.layout().insertWidget(0, _header_bar)
         self.scrollAreaWidgetContents.layout().setContentsMargins(12, 12, 12, 12)
         self.scrollAreaWidgetContents.layout().setSpacing(12)
+
+        # ── Proposal Number — 24-char countdown ───────────────────────────────
+        _PROP_LIMIT = 24
+        self.lineEdit_proposal.setMaxLength(_PROP_LIMIT)
+        _prop_ctr = QLabel(f"{_PROP_LIMIT}")
+        _prop_ctr.setFixedWidth(52)
+        _prop_ctr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        def _update_prop_ctr(txt, _lbl=_prop_ctr, _lim=_PROP_LIMIT):
+            remaining = _lim - len(txt)
+            _lbl.setText(str(remaining))
+            if remaining <= 0:
+                _lbl.setStyleSheet(
+                    "QLabel { font-size:10px; font-weight:600; color:#920d2e;"
+                    " background:#fff0f2; border:1px solid #e8a0aa;"
+                    " border-radius:4px; padding:1px 4px; }")
+            elif remaining <= 5:
+                _lbl.setStyleSheet(
+                    "QLabel { font-size:10px; font-weight:600; color:#7b3800;"
+                    " background:#fff8ec; border:1px solid #e8a020;"
+                    " border-radius:4px; padding:1px 4px; }")
+            else:
+                _lbl.setStyleSheet(
+                    "QLabel { font-size:10px; font-weight:600; color:#6a9f58;"
+                    " background:#f2faf0; border:1px solid #b8dcaf;"
+                    " border-radius:4px; padding:1px 4px; }")
+        _update_prop_ctr("")  # initialise style to green
+        self.lineEdit_proposal.textChanged.connect(_update_prop_ctr)
+
+        # Swap the bare lineEdit in formLayout_top for a container [lineEdit | countdown]
+        _prop_row, _prop_role = self.formLayout_top.getWidgetPosition(self.lineEdit_proposal)
+        _prop_container = QWidget()
+        _prop_hbox = QHBoxLayout(_prop_container)
+        _prop_hbox.setContentsMargins(0, 0, 0, 0)
+        _prop_hbox.setSpacing(6)
+        _prop_hbox.addWidget(self.lineEdit_proposal, 1)
+        _prop_hbox.addWidget(_prop_ctr)
+        self.formLayout_top.setWidget(_prop_row, _prop_role, _prop_container)
 
         # Replace plain textEdit_contact with _ContactWidget (structured name/email fields)
         old_contact = self.textEdit_contact

@@ -532,7 +532,39 @@ class ThermalImagingWidget(QWidget):
         self._ir_proposal = QLineEdit()
         self._ir_proposal.setPlaceholderText("MCMX-CUSTNAME-IRSTUDY-YYYYMMDD")
         self._ir_proposal.setStyleSheet(_FIELD_STYLE)
-        form_lay.addRow(_lbl("Proposal Number:"), self._ir_proposal)
+        self._ir_proposal.setMaxLength(24)
+        _ir_prop_ctr = QLabel("24")
+        _ir_prop_ctr.setFixedWidth(52)
+        _ir_prop_ctr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        def _update_ir_prop_ctr(txt, _lbl=_ir_prop_ctr, _lim=24):
+            remaining = _lim - len(txt)
+            _lbl.setText(str(remaining))
+            if remaining <= 0:
+                _lbl.setStyleSheet(
+                    "QLabel { font-size:10px; font-weight:600; color:#920d2e;"
+                    " background:#fff0f2; border:1px solid #e8a0aa;"
+                    " border-radius:4px; padding:1px 4px; }")
+            elif remaining <= 5:
+                _lbl.setStyleSheet(
+                    "QLabel { font-size:10px; font-weight:600; color:#7b3800;"
+                    " background:#fff8ec; border:1px solid #e8a020;"
+                    " border-radius:4px; padding:1px 4px; }")
+            else:
+                _lbl.setStyleSheet(
+                    "QLabel { font-size:10px; font-weight:600; color:#6a9f58;"
+                    " background:#f2faf0; border:1px solid #b8dcaf;"
+                    " border-radius:4px; padding:1px 4px; }")
+        _update_ir_prop_ctr("")
+        self._ir_proposal.textChanged.connect(_update_ir_prop_ctr)
+
+        _ir_prop_container = QWidget()
+        _ir_prop_hbox = QHBoxLayout(_ir_prop_container)
+        _ir_prop_hbox.setContentsMargins(0, 0, 0, 0)
+        _ir_prop_hbox.setSpacing(6)
+        _ir_prop_hbox.addWidget(self._ir_proposal, 1)
+        _ir_prop_hbox.addWidget(_ir_prop_ctr)
+        form_lay.addRow(_lbl("Proposal Number:"), _ir_prop_container)
 
         self._ir_customer = QLineEdit()
         self._ir_customer.setStyleSheet(_FIELD_STYLE)
