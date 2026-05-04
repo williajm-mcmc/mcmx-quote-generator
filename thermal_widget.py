@@ -2013,6 +2013,7 @@ class ThermalImagingWidget(QWidget):
             "margin":            self._margin_lbl.text(),
             "ase_enabled":       self._ase_enabled.isChecked(),
             "ase_tier":          self._ase_tier_combo.currentIndex(),
+            "ase_tier_label":    self._ase_tier_combo.currentText(),
             "ase_custom":        self._ase_custom_edit.text(),
             "ase_margin":        self._ase_margin_lbl.text(),
             # Rate overrides
@@ -2041,8 +2042,12 @@ class ThermalImagingWidget(QWidget):
 
     def restore_data(self, d: dict):
         if not d: return
+
+        # ── Basic fields ──────────────────────────────────────────────────────
         self._days_edit.setText(str(d.get("working_days", "")))
         self._hours_edit.setText(str(d.get("hours_per_day", "8")))
+
+        # ── Technician rows ───────────────────────────────────────────────────
         self._num_techs = d.get("num_techs", 1)
         self._tech_count_lbl.setText(str(self._num_techs))
         self._rebuild_tech_rows()
@@ -2050,41 +2055,95 @@ class ThermalImagingWidget(QWidget):
             if i < len(self._tech_rows): self._tech_rows[i]["name"].setText(nm)
         for i, tv in enumerate(d.get("tech_travel", [])):
             if i < len(self._tech_rows): self._tech_rows[i]["travel"].setText(tv)
+
+        # Restore travel mode — block signals to prevent _mark_outlook_stale
+        # from corrupting _confirmed; try exact match then case-insensitive
+        # fallback; always call _toggle so field visibility is correct.
         for i, mode in enumerate(d.get("tech_modes", [])):
-            if i < len(self._tech_rows):
-                combo = self._tech_rows[i]["mode"]
-                idx   = combo.findText(mode)
-                if idx >= 0:
-                    combo.blockSignals(True)
-                    combo.setCurrentIndex(idx)
-                    combo.blockSignals(False)
-                    if "_toggle" in self._tech_rows[i]:
-                        self._tech_rows[i]["_toggle"](mode)
+            if i >= len(self._tech_rows):
+                break
+            combo = self._tech_rows[i]["mode"]
+            # Exact match first
+            idx = combo.findText(str(mode))
+            if idx < 0:
+                # Case-insensitive fallback (handles old files / capitalisation drift)
+                idx = combo.findText(
+                    str(mode), Qt.MatchFlag.MatchFixedString)
+            combo.blockSignals(True)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+            # Always sync visibility regardless of match success
+            resolved_text = combo.currentText()
+            if "_toggle" in self._tech_rows[i]:
+                self._tech_rows[i]["_toggle"](resolved_text)
+
         for i, fc in enumerate(d.get("tech_flight_costs", [])):
             if i < len(self._tech_rows): self._tech_rows[i]["flight_cost"].setText(fc)
         for i, mi in enumerate(d.get("tech_mileages", [])):
             if i < len(self._tech_rows): self._tech_rows[i]["mileage"].setText(mi)
-        wd = set(d.get("work_days", [0,1,2,3,4]))
+
+        # ── Scheduling config — block signals to avoid stale cascade ──────────
         for i, cb in enumerate(self._day_checks):
-            cb.setChecked(i in wd)
+            cb.blockSignals(True)
+            cb.setChecked(i in set(d.get("work_days", [0, 1, 2, 3, 4])))
+            cb.blockSignals(False)
         if hasattr(self, "_start_day_combo"):
+            self._start_day_combo.blockSignals(True)
             self._start_day_combo.setCurrentIndex(int(d.get("start_day", 0)))
+            self._start_day_combo.blockSignals(False)
         if hasattr(self, "_work_start_combo"):
+            self._work_start_combo.blockSignals(True)
             self._work_start_combo.setCurrentIndex(int(d.get("work_start", 8)))
+            self._work_start_combo.blockSignals(False)
         if hasattr(self, "_work_end_combo"):
+            self._work_end_combo.blockSignals(True)
             self._work_end_combo.setCurrentIndex(int(d.get("work_end", 17)))
+            self._work_end_combo.blockSignals(False)
+        # Fire the label update once, cleanly, after both combos are set
+        if hasattr(self, "_update_wh_window_lbl"):
+            self._update_wh_window_lbl()
+
+        # ── Rates & margin ────────────────────────────────────────────────────
         self._margin_lbl.setText(d.get("margin", "0.0"))
-        self._ase_enabled.setChecked(d.get("ase_enabled", False))
-        idx = d.get("ase_tier", 0)
-        if 0 <= idx < self._ase_tier_combo.count():
-            self._ase_tier_combo.setCurrentIndex(idx)
-        self._ase_custom_edit.setText(d.get("ase_custom", ""))
-        self._ase_margin_lbl.setText(d.get("ase_margin", "0.0"))
-        self._rate_labor.setText(d.get("rate_labor",  str(self.LABOR_RATE)))
+        self._rate_labor.setText(d.get("rate_labor",   str(self.LABOR_RATE)))
         self._rate_travel.setText(d.get("rate_travel", str(self.TRAVEL_RATE)))
-        self._rate_hotel.setText(d.get("rate_hotel",  str(self.HOTEL_RATE)))
-        self._rate_meal.setText(d.get("rate_meal",    str(self.MEAL_RATE)))
-        self._rate_mile.setText(d.get("rate_mile",    str(self.MILE_RATE)))
+        self._rate_hotel.setText(d.get("rate_hotel",   str(self.HOTEL_RATE)))
+        self._rate_meal.setText(d.get("rate_meal",     str(self.MEAL_RATE)))
+        self._rate_mile.setText(d.get("rate_mile",     str(self.MILE_RATE)))
+
+        # ── ASE section ───────────────────────────────────────────────────────
+        # Block signals on the tier combo so _on_ase_tier_changed does not fire
+        # with stale margin / custom values.  Fire it once manually at the end.
+        self._ase_enabled.blockSignals(True)
+        self._ase_enabled.setChecked(d.get("ase_enabled", False))
+        self._ase_enabled.blockSignals(False)
+        self._ase_body.setVisible(d.get("ase_enabled", False))
+
+        # Tier: match by saved label text first (immune to list-order changes),
+        # then fall back to the saved integer index.
+        saved_tier_label = d.get("ase_tier_label", "")
+        saved_tier_idx   = d.get("ase_tier", 0)
+        tier_idx = -1
+        if saved_tier_label:
+            tier_idx = self._ase_tier_combo.findText(saved_tier_label)
+        if tier_idx < 0 and 0 <= saved_tier_idx < self._ase_tier_combo.count():
+            tier_idx = saved_tier_idx
+        if tier_idx < 0:
+            tier_idx = 0
+        self._ase_tier_combo.blockSignals(True)
+        self._ase_tier_combo.setCurrentIndex(tier_idx)
+        self._ase_tier_combo.blockSignals(False)
+
+        self._ase_custom_edit.blockSignals(True)
+        self._ase_custom_edit.setText(d.get("ase_custom", ""))
+        self._ase_custom_edit.blockSignals(False)
+        self._ase_margin_lbl.setText(d.get("ase_margin", "0.0"))
+
+        # Now fire the tier-changed handler once with everything in place
+        self._on_ase_tier_changed(tier_idx)
+
+        # ── Confirmed summary ─────────────────────────────────────────────────
         self._confirmed = d.get("confirmed", {})
         if self._confirmed:
             c = self._confirmed
