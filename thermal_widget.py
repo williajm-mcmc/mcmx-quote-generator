@@ -2459,8 +2459,26 @@ def generate_thermal_doc(data: dict, output_path: str):
 
     days_desc  = (f"Up to {work_days} day{'s' if work_days != 1 else ''} of on-site support "
                   f"({hours_pd:.0f} hours per day)") if work_days > 0 else ""
-    techs_desc = (f"for {num_techs} technician{'s' if num_techs != 1 else ''}"
-                  "\nWork to occur during standard business hours (M-F, 8-5)")
+    techs_desc = f"for {num_techs} technician{'s' if num_techs != 1 else ''}"
+
+    # Build work-hours note from the configured window (not hardcoded)
+    def _hlbl(h):
+        ampm = "AM" if h < 12 else "PM"
+        hr12 = h % 12 or 12
+        return f"{hr12}:00 {ampm}"
+    _ws = data.get("work_start", 8)
+    _we = data.get("work_end",   17)
+    _work_days_str = ", ".join(
+        n for n, on in zip(
+            ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            [i in set(data.get("work_days", [0,1,2,3,4]))
+             for i in range(7)]
+        ) if on
+    ) or "M-F"
+    hours_note = (
+        f"Work to occur during scheduled hours ({_work_days_str}, "
+        f"{_hlbl(_ws)}–{_hlbl(_we)})"
+    )
 
     extras = []
     if confirmed.get("hotel_nights", 0) > 0:
@@ -2496,8 +2514,9 @@ def generate_thermal_doc(data: dict, output_path: str):
         "scanning_price":       f"{labor_grand:,.0f}",
         "ase_price":            f"${ase_grand:,.0f}" if ase_grand > 0 else "—",
         "total_price":          f"{grand_total:,.0f}",
-        "scanning_days_desc":   days_desc,
-        "scanning_techs_desc":  techs_desc,
+        "scanning_days_desc":     days_desc,
+        "scanning_techs_desc":    techs_desc,
+        "scanning_hours_note":    hours_note,
         "scanning_expenses_desc": expenses_desc,
         "customer_picture":     customer_image,
     })
@@ -2531,6 +2550,7 @@ def generate_thermal_doc(data: dict, output_path: str):
             "total_price":            f"{grand_total:,.0f}",
             "scanning_days_desc":     days_desc,
             "scanning_techs_desc":    techs_desc,
+            "scanning_hours_note":    hours_note,
             "scanning_expenses_desc": expenses_desc,
         }
 
